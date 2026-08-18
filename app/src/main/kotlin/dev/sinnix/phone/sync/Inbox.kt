@@ -21,9 +21,9 @@ import org.json.JSONObject
  * that is not reachable from prime still gets its receipts.
  *
  * - `steering.json` — the standing menu, open commitments, the ready queue.
- * - `glance.json` — the estate's verdict, as data rather than as a page.
+ * - `glance.json` — prime's verdict, as data rather than as a page.
  * - `receipts` — one file per thing prime answered that the phone asked for.
- * - `notify` — one file per estate interruption.
+ * - `notify` — one file per interruption prime raised.
  * - `decks` — drill decks, which parameterize the instrument engines.
  *
  * Receipts and notifications are consumed: rendered as a notification and then

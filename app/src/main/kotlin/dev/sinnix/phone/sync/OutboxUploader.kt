@@ -27,8 +27,8 @@ import org.json.JSONObject
  *   out live and was queued anyway executes once and still gets its receipt.
  *   That is the token's entire job and the reason this can be dumb.
  * - blobs (a voice note, a PPG trace, a shared file) and their `.json`
- *   sidecars are data, and go to /chunk on the `estate-outbox` lane, the same
- *   directory in the lake the drain's rsync landed them in.
+ *   sidecars are data, and go to /chunk on the `outbox` lane, which is the
+ *   directory in the lake `sinnix-score` reads traces out of.
  *
  * Ordering inside a pair is deliberate: the blob first, the sidecar second,
  * and neither deleted until both are acknowledged. A sidecar that arrives
@@ -156,7 +156,7 @@ class OutboxUploader(context: Context) {
         }
         val name = java.net.URLEncoder.encode(file.name, "UTF-8")
         return when (val reply =
-            hub.post("${HubBulk.PHONE}/chunk?lane=estate-outbox&name=$name", body)) {
+            hub.post("${HubBulk.PHONE}/chunk?lane=outbox&name=$name", body)) {
             is HubBulk.Reply.Ok -> true
             is HubBulk.Reply.Refused -> {
                 note("prime refused ${file.name}: ${reply.detail.take(120)}")
