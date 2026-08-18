@@ -171,10 +171,12 @@ object HealthLane {
      * Generation 3 exists to re-run that sweep with pagination actually
      * followed to the end.
      *
-     * A re-sweep deliberately RE-EMITS records already captured. That is the
-     * point: every event carries the record's Health Connect id, modification
-     * time and the emit time, so a re-read is separable downstream and never
-     * destructive.
+     * A re-sweep is now CHEAP rather than duplicative. It re-reads every
+     * record the provider retains, as it always did, but each one is gated on
+     * its (record_id, lastModifiedTime) by HealthSeen -- so a sweep over
+     * already-captured history emits nothing and a revised record emits
+     * exactly once more. Bumping this is therefore a way to re-check
+     * coverage, not a way to re-send a history.
      */
     private const val BACKFILL_GENERATION = 3
 
@@ -327,6 +329,11 @@ object HealthLane {
             "ungranted", JSONArray(ungranted.map { it.simpleName }),
             "rate_limited", rateLimited,
             "records", written,
+            // How many distinct records this phone has ever emitted. With the
+            // identity gate in place `records` counts only what was NEW this
+            // tick, so a healthy re-sweep reads zero -- and this number is
+            // what says the gate is holding rather than the lane being dead.
+            "known_records", HealthSeen.count(ctx),
         )
         return written
     }
@@ -454,9 +461,15 @@ object HealthLane {
                     // The id is the entire value of a deletion: it is what
                     // lets a downstream store tombstone the right record
                     // instead of holding a count of unidentifiable losses.
-                    is DeletionChange ->
+                    is DeletionChange -> {
+                        // Forgotten as well as reported: some providers
+                        // "correct" an entry by deleting and rewriting it,
+                        // and a record still marked as emitted would never
+                        // reach the lake its second time.
+                        HealthSeen.forget(ctx, change.recordId)
                         Events.record(ctx, "health_deletion",
                             "type", type.simpleName, "record_id", change.recordId)
+                    }
                     else -> Unit
                 }
             }
@@ -526,6 +539,16 @@ object HealthLane {
         }
 
     private fun emit(ctx: Context, r: Record): Boolean {
+        // Identity, not time, decides whether this record has already been
+        // told to prime. Every path into this function can legitimately hand
+        // over a record it has handed over before -- a re-sweep after a token
+        // expiry, a generation bump, a changes feed redelivering a revision --
+        // and before this gate existed each of those re-emitted the whole
+        // retained history. See HealthSeen for the measurement (2,298,880
+        // lines carrying 11,118 distinct records in one day file).
+        if (!HealthSeen.claim(ctx, r.metadata.id, r.metadata.lastModifiedTime.toEpochMilli())) {
+            return false
+        }
         when (r) {
             is StepsRecord ->
                 Events.record(ctx, "health_steps",
