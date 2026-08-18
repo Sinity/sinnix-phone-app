@@ -103,60 +103,86 @@ class MediaMirror(context: Context) {
             )
         }
 
+        // Keep scanning while the scans keep filling up.
+        //
+        // One scan is bounded (SCAN_CAP) so the list never holds a whole
+        // Downloads directory in memory -- but stopping after one bounded
+        // list is what made this a trickle, and twelve files every ten
+        // minutes against a lane holding 196,946 of them is a backlog
+        // measured in months. A full scan means there is more behind it, so
+        // the watermark advances and the next scan returns the next stretch.
+        // Re-walking the tree costs seconds of stat calls against transfers
+        // measured in gigabytes, which is the right side of that trade.
         var shipped = 0
-        var highest = watermark
-        for (file in newerThan(root, watermark)) {
-            if (shipped >= MAX_PER_TICK) break
-            val length = file.length()
-            if (length <= 0L || length > MAX_BYTES) {
-                Events.record(
-                    ctx, "media_mirror_skipped",
-                    "lane", lane, "file", file.name, "bytes", length,
-                )
-                // Counted as seen: a 200 MB video is not going to shrink, and
-                // holding the watermark back for it would re-walk it forever.
-                highest = maxOf(highest, file.lastModified())
-                continue
-            }
-            val body = try {
-                file.readBytes()
-            } catch (e: Exception) {
-                note("read failed: ${file.name}")
-                return false
-            }
-            val name = file.absolutePath.removePrefix(root.absolutePath).trimStart('/')
-            // Encoded, because these names are the operator's, not the app's:
-            // `Samsung Health/report (1).pdf` has to survive the query string
-            // intact for prime to write the same name the rsync did.
-            val encoded = java.net.URLEncoder.encode(name, "UTF-8")
-            when (val reply = hub.post("${HubBulk.PHONE}/chunk?lane=$lane&name=$encoded", body)) {
-                is HubBulk.Reply.Ok -> {
-                    shipped++
-                    highest = maxOf(highest, file.lastModified())
-                }
-                is HubBulk.Reply.Refused -> {
-                    // A name prime will not take (too deep, an unexpected
-                    // character) is not retryable, and must not hold the lane
-                    // up behind it.
+        var scanned: Int
+        do {
+            val pending = newerThan(root, watermark)
+            scanned = pending.size
+            var highest = watermark
+            for (file in pending) {
+                val length = file.length()
+                if (length <= 0L || length > MAX_BYTES) {
                     Events.record(
-                        ctx, "media_mirror_refused",
-                        "lane", lane, "file", name, "detail", reply.detail.take(120),
+                        ctx, "media_mirror_skipped",
+                        "lane", lane, "file", file.name, "bytes", length,
                     )
+                    // Counted as seen: a 200 MB video is not going to shrink,
+                    // and holding the watermark back for it would re-walk it
+                    // forever.
                     highest = maxOf(highest, file.lastModified())
+                    continue
                 }
-                HubBulk.Reply.Unreachable -> {
-                    note("unreachable")
-                    return false
+                val body =
+                    try {
+                        file.readBytes()
+                    } catch (e: Exception) {
+                        persist(lane, watermark, highest)
+                        note("read failed: ${file.name}")
+                        return false
+                    }
+                val name = file.absolutePath.removePrefix(root.absolutePath).trimStart('/')
+                // Encoded, because these names are the operator's, not the
+                // app's: `Samsung Health/report (1).pdf` has to survive the
+                // query string intact for prime to write the same name the
+                // rsync did.
+                val encoded = java.net.URLEncoder.encode(name, "UTF-8")
+                when (val reply = hub.post("${HubBulk.PHONE}/chunk?lane=$lane&name=$encoded", body)) {
+                    is HubBulk.Reply.Ok -> {
+                        shipped++
+                        highest = maxOf(highest, file.lastModified())
+                    }
+                    is HubBulk.Reply.Refused -> {
+                        // A name prime will not take (too deep, an unexpected
+                        // character) is not retryable, and must not hold the
+                        // lane up behind it.
+                        Events.record(
+                            ctx, "media_mirror_refused",
+                            "lane", lane, "file", name, "detail", reply.detail.take(120),
+                        )
+                        highest = maxOf(highest, file.lastModified())
+                    }
+                    HubBulk.Reply.Unreachable -> {
+                        // Everything acknowledged so far still counts, so an
+                        // interrupted backlog resumes where it stopped rather
+                        // than from the beginning.
+                        persist(lane, watermark, highest)
+                        note("unreachable")
+                        return false
+                    }
                 }
             }
-        }
-        if (highest > watermark) {
-            prefs().edit().putLong(lane, highest).apply()
-            if (shipped > 0) {
-                Events.record(ctx, "media_mirrored", "lane", lane, "files", shipped)
-            }
+            persist(lane, watermark, highest)
+            watermark = maxOf(watermark, highest)
+        } while (scanned >= SCAN_CAP)
+
+        if (shipped > 0) {
+            Events.record(ctx, "media_mirrored", "lane", lane, "files", shipped)
         }
         return true
+    }
+
+    private fun persist(lane: String, watermark: Long, highest: Long) {
+        if (highest > watermark) prefs().edit().putLong(lane, highest).apply()
     }
 
     /**
@@ -208,10 +234,12 @@ class MediaMirror(context: Context) {
         /** Prime accepts four path segments; the lane root is one of them. */
         private const val MAX_DEPTH = 3
 
-        /** Stop walking rather than build a list of two hundred thousand files. */
+        /**
+         * How many files one scan may collect. A bound on MEMORY, not on
+         * throughput: a full scan is followed by another scan, so a backlog
+         * drains continuously and only the list in flight is capped.
+         */
         private const val SCAN_CAP = 2_000
-
-        private const val MAX_PER_TICK = 12
 
         /** Prime's own upload ceiling is 128 MiB; refusing here saves the read. */
         private const val MAX_BYTES = 128L shl 20

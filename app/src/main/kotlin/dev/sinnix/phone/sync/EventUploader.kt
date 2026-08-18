@@ -87,9 +87,7 @@ class EventUploader(context: Context) {
         // Oldest first: a phone catching up after days offline should hand
         // prime a history that grows forwards, not one that starts with today
         // and backfills later.
-        var budget = MAX_BATCHES_PER_TICK
         for (file in files) {
-            if (budget <= 0) break
             val day = file.name.removePrefix(PREFIX).removeSuffix(SUFFIX)
             var cursor = cursorOf(file.name)
             if (cursor < 0) {
@@ -106,15 +104,27 @@ class EventUploader(context: Context) {
                 }
                 setCursor(file.name, cursor)
             }
-            while (budget > 0 && cursor < file.length()) {
-                val body = readBatch(file, cursor) ?: return note("read failed: ${file.name}")
+            // The end of the file as it stands NOW, fixed for this pass.
+            //
+            // The live day file grows while this drains -- every event this
+            // very loop records lands in it -- so a loop that chased
+            // `file.length()` would never reach a natural end on a busy
+            // phone. Draining to a snapshot terminates by construction, and
+            // whatever arrived meanwhile goes out on the next tick, twenty
+            // seconds later.
+            val endAt = file.length()
+            var rewinds = 0
+            var batches = 0
+            while (cursor < endAt) {
+                val body = readBatch(file, cursor, endAt)
+                    ?: return note("read failed: ${file.name}")
                 if (body.isEmpty()) {
                     // No complete line in range. Ordinarily that is the record
                     // being appended right now, and the next tick ships it --
                     // but a single line longer than the batch cap would stall
                     // this file forever, silently, which is the failure shape
                     // this whole lane exists to stop having.
-                    if (file.length() - cursor > MAX_BATCH_BYTES) {
+                    if (endAt - cursor > MAX_BATCH_BYTES) {
                         Events.record(
                             ctx, "events_upload_stalled",
                             "file", file.name, "at_offset", cursor,
@@ -123,29 +133,46 @@ class EventUploader(context: Context) {
                     }
                     break
                 }
-                budget--
                 when (val reply = hub.post("${HubBulk.PHONE}/events?day=$day&offset=$cursor", body)) {
                     is HubBulk.Reply.Ok -> {
                         cursor += body.size
                         setCursor(file.name, cursor)
+                        batches++
                     }
                     is HubBulk.Reply.Refused -> {
                         val expected = reply.body?.optLong("expected_offset", -1L) ?: -1L
                         if (reply.code == CONFLICT && expected >= 0) {
                             // Prime is missing earlier bytes: rewind and
                             // re-send from where it actually is.
-                            cursor = expected.coerceAtMost(file.length())
+                            cursor = expected.coerceAtMost(endAt)
                             setCursor(file.name, cursor)
                             Events.record(
                                 ctx, "events_cursor_rewound",
                                 "file", file.name, "to_offset", cursor,
                             )
+                            // A rewind is progress -- prime accepts the
+                            // re-sent bytes and the cursor advances past them
+                            // -- but only if prime's answer changes. If it
+                            // keeps naming the same offset, this pass is a
+                            // loop, and a loop that ships nothing is worse
+                            // than a pass that stops and says so.
+                            if (++rewinds > MAX_REWINDS_PER_FILE) {
+                                return note("rewound $rewinds times without progress on ${file.name}")
+                            }
                         } else {
                             return note("prime refused ${reply.code}: ${reply.detail.take(120)}")
                         }
                     }
                     HubBulk.Reply.Unreachable -> return note("unreachable")
                 }
+            }
+            if (batches > 1) {
+                // Only worth a line when this was a real drain rather than the
+                // steady-state one-batch trickle.
+                Events.record(
+                    ctx, "events_drained",
+                    "file", file.name, "batches", batches, "to_offset", cursor,
+                )
             }
         }
         note(null)
@@ -164,10 +191,10 @@ class EventUploader(context: Context) {
      * Empty means the only thing available is a line still being appended,
      * which is the ordinary state of the file the app is writing to right now.
      */
-    private fun readBatch(file: File, offset: Long): ByteArray? =
+    private fun readBatch(file: File, offset: Long, endAt: Long): ByteArray? =
         try {
             RandomAccessFile(file, "r").use { input ->
-                val want = minOf(MAX_BATCH_BYTES, input.length() - offset).toInt()
+                val want = minOf(MAX_BATCH_BYTES, endAt - offset).toInt()
                 val buffer = ByteArray(want)
                 input.seek(offset)
                 input.readFully(buffer)
@@ -210,12 +237,27 @@ class EventUploader(context: Context) {
         private const val CONFLICT = 409
 
         /**
-         * 512 KiB a batch, four batches a heartbeat: 2 MiB every 20s, which
-         * clears an ordinary day's backlog in a couple of ticks and the 3.5 GB
-         * outlier without ever holding more than one batch in memory or
-         * monopolising the heartbeat it rides on.
+         * 512 KiB a batch, and as many batches back to back as it takes.
+         *
+         * The size cap is what keeps memory bounded and makes a failed batch
+         * resumable at a known offset; it is not a rate. It used to be both,
+         * because the loop also stopped after four batches a tick -- 2 MiB
+         * every 20 seconds, about 100 KB/s, on a LAN that moves 10 MB/s. The
+         * 08-16 backlog re-ship crawled at ~140 KB/s for that reason alone,
+         * sleeping 20 seconds between every half-megabyte while the link sat
+         * idle. Being behind is exactly when speed matters, so while prime's
+         * cursor trails the file this sends continuously and only returns to
+         * the tick cadence once caught up.
          */
         private const val MAX_BATCH_BYTES = 512L shl 10
-        private const val MAX_BATCHES_PER_TICK = 4
+
+        /**
+         * A rewind means prime named an earlier offset and this re-sent from
+         * there, which normally ends the disagreement in one round trip. A
+         * handful of allowed retries covers a genuinely fragmented history;
+         * past that the exchange is not converging, and looping on it would
+         * spend the drain doing nothing.
+         */
+        private const val MAX_REWINDS_PER_FILE = 8
     }
 }

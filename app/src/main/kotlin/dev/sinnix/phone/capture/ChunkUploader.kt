@@ -77,10 +77,14 @@ class ChunkUploader(context: Context) {
         if (!hub.unmeteredOrAllowed()) return note("metered")
         val dir = Storage.chunkDir(ctx) ?: return note("no chunk directory")
 
+        // Every finished chunk, not a slice of them. A backlog means the
+        // uploads have been failing and the recorder has not stopped, which
+        // is exactly when the lane should run at the speed of the link rather
+        // than shipping four files and sleeping twenty seconds. One chunk is
+        // held in memory at a time either way.
         val pending =
             dir.listFiles { f -> f.isFile && shippable(f.name) }
                 ?.sortedBy { it.name }
-                ?.take(MAX_PER_TICK)
                 ?: return note("chunk directory unreadable")
         if (pending.isEmpty()) return note(null)
 
@@ -162,15 +166,6 @@ class ChunkUploader(context: Context) {
             (name.endsWith(".m4a") || name.endsWith(".m4a.orphan"))
 
     companion object {
-        /**
-         * Four per heartbeat (20s) drains a backlog at roughly 12 chunks a
-         * minute -- an hour of accumulated audio clears in about a minute --
-         * while leaving the recorder's own thread untouched, since this runs
-         * on its own worker and one pass never holds more than one chunk in
-         * memory.
-         */
-        private const val MAX_PER_TICK = 4
-
         /** A 5-minute chunk is ~3.6 MB; anything past this is not one. */
         private const val MAX_BYTES = 64L shl 20
     }

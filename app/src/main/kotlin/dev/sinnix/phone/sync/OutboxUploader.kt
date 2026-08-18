@@ -78,7 +78,7 @@ class OutboxUploader(context: Context) {
         val sidecars = files.filter { it.name.endsWith(".json") && !it.name.startsWith("intent-") }
         val blobs = files.filter { !it.name.endsWith(".json") }
 
-        for (intent in intents.take(MAX_PER_TICK)) {
+        for (intent in intents) {
             val body = Storage.readText(intent) ?: continue
             val parsed = try {
                 JSONObject(body)
@@ -123,7 +123,7 @@ class OutboxUploader(context: Context) {
         // for an unmetered network the way ambient chunks do. Intents above do
         // not: they are hundreds of bytes and the operator is waiting.
         if (blobs.isNotEmpty() && !hub.unmeteredOrAllowed()) return note("metered")
-        for (blob in blobs.take(MAX_PER_TICK)) {
+        for (blob in blobs) {
             val sidecar = sidecars.firstOrNull { it.name == blob.name + ".json" }
             if (!ship(blob)) return
             if (sidecar != null && !ship(sidecar)) return
@@ -180,8 +180,10 @@ class OutboxUploader(context: Context) {
         }
     }
 
-    companion object {
-        /** Enough to clear an ordinary backlog quickly without a long pass. */
-        private const val MAX_PER_TICK = 8
-    }
+    // No per-pass cap, deliberately. The spool is bounded by what the
+    // operator actually queued while offline, every entry is small, and each
+    // one is something someone is waiting on -- delivering eight of them and
+    // sleeping twenty seconds is the pacing bug the event lane had, in a
+    // place where the latency is felt directly. A pass ends when the spool is
+    // empty or prime stops answering.
 }
