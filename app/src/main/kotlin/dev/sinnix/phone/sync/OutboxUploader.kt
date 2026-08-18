@@ -64,7 +64,12 @@ class OutboxUploader(context: Context) {
 
     private fun drain() {
         val dir = Storage.estateDir(ctx, Storage.OUTBOX) ?: return note("no outbox directory")
-        val files = dir.listFiles { f -> f.isFile && !f.name.endsWith(".part") }
+        // `.part` is still being written; `.rejected` is something prime has
+        // already refused and this pass must not offer again (nor mistake for
+        // a blob, since it no longer ends in .json).
+        val files = dir.listFiles { f ->
+            f.isFile && !f.name.endsWith(".part") && !f.name.endsWith(".rejected")
+        }
             ?.sortedBy { it.name }
             ?: return note("outbox directory unreadable")
         if (files.isEmpty()) return note(null)
@@ -94,7 +99,23 @@ class OutboxUploader(context: Context) {
                     "duplicate", answer.optBoolean("duplicate", false),
                 )
             } else {
-                return note("prime refused an intent: ${answer.optString("detail").take(120)}")
+                // Prime answered and said no -- an unknown kind, a steer that
+                // failed. Retrying cannot fix that, and this pass runs every
+                // twenty seconds, so a refused intent left in place would be
+                // re-posted forever and would hold up everything queued behind
+                // it. Set aside rather than deleted: the operator asked for
+                // this, and the file is the evidence of what was asked.
+                val detail = answer.optString("detail").take(200)
+                if (intent.renameTo(File(intent.parentFile, intent.name + ".rejected"))) {
+                    Events.record(
+                        ctx, "intent_rejected",
+                        "intent_kind", parsed.optString("kind"),
+                        "send_token", parsed.optString("send_token"),
+                        "detail", detail,
+                    )
+                } else {
+                    return note("prime refused an intent that will not move aside: $detail")
+                }
             }
         }
 
