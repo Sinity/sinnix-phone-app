@@ -97,7 +97,7 @@ private fun WidgetBody(status: JSONObject?, coverage: Coverage, glance: JSONObje
             verticalAlignment = Alignment.Vertical.CenterVertically,
         ) {
             Text(
-                glance?.optString("verdict")?.ifEmpty { "estate quiet" } ?: "estate unknown",
+                glance?.optString("verdict")?.ifEmpty { "all quiet" } ?: "prime unknown",
                 style = TextStyle(color = ColorProvider(Palette.Text)),
             )
             Text(

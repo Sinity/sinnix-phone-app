@@ -1,4 +1,4 @@
-package dev.sinnix.phone.estate
+package dev.sinnix.phone.prime
 
 import android.content.Context
 import dev.sinnix.phone.core.Events

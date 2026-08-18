@@ -37,7 +37,7 @@ object Scheduler {
         // Prime's way back in. Rides this tick for the same reason everything
         // else does, and because the failure it repairs is only observable
         // from the device -- prime cannot ask a phone it cannot reach.
-        dev.sinnix.phone.estate.TransportGuard.tick(ctx)
+        dev.sinnix.phone.prime.TransportGuard.tick(ctx)
         dev.sinnix.phone.ui.widget.SinnixWidget.refresh(ctx)
     }
 

@@ -41,7 +41,7 @@ import dev.sinnix.phone.core.Prefs
 import dev.sinnix.phone.sync.InboxWatcher
 import dev.sinnix.phone.ui.capture.CaptureScreen
 import dev.sinnix.phone.ui.capture.GrantsScreen
-import dev.sinnix.phone.ui.estate.EstateScreen
+import dev.sinnix.phone.ui.prime.PrimeScreen
 import dev.sinnix.phone.ui.home.HomeScreen
 import dev.sinnix.phone.ui.instrument.InstrumentsScreen
 import dev.sinnix.phone.ui.steering.ReadyQueueScreen
@@ -55,7 +55,7 @@ import dev.sinnix.phone.ui.theme.SinnixTheme
  *
  * Everything that is not timing-critical or intent-entered is a route in here.
  * The bottom bar has four destinations because the app genuinely has four
- * things in it — the estate, the bench, the organ, and the place they meet —
+ * things in it — prime, the bench, the organ, and the place they meet —
  * and a drawer would hide three of them behind a gesture.
  */
 class MainActivity : ComponentActivity() {
@@ -158,7 +158,7 @@ private enum class Destination(
     val icon: ImageVector,
 ) {
     HOME("home", "Home", Icons.Filled.Home),
-    ESTATE("estate", "Estate", Icons.Filled.Place),
+    PRIME("prime", "Prime", Icons.Filled.Place),
     INSTRUMENTS("instruments", "Bench", Icons.Filled.List),
     CAPTURE("capture", "Capture", Icons.Filled.Settings),
 }
@@ -205,7 +205,7 @@ private fun AppScaffold(startRoute: String?) {
             modifier = Modifier.padding(padding),
         ) {
             composable(Destination.HOME.route) { HomeScreen(nav) }
-            composable(Destination.ESTATE.route) { EstateScreen(nav) }
+            composable(Destination.PRIME.route) { PrimeScreen(nav) }
             composable(Destination.INSTRUMENTS.route) { InstrumentsScreen(nav) }
             composable(Destination.CAPTURE.route) { CaptureScreen(nav) }
             composable("grants") { GrantsScreen(nav) }

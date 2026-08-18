@@ -65,7 +65,7 @@ data class Epoch(
         const val UNCALIBRATED = -1
 
         private fun file(ctx: Context): File? =
-            Storage.estateDir(ctx, null)?.let { File(it, FILE_NAME) }
+            Storage.phoneDir(ctx, null)?.let { File(it, FILE_NAME) }
 
         fun read(ctx: Context): Epoch? {
             val text = Storage.readText(file(ctx)) ?: return null

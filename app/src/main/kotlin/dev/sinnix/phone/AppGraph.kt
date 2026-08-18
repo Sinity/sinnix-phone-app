@@ -1,7 +1,7 @@
 package dev.sinnix.phone
 
 import android.content.Context
-import dev.sinnix.phone.estate.Transport
+import dev.sinnix.phone.prime.Transport
 
 /**
  * The whole dependency graph, by hand.

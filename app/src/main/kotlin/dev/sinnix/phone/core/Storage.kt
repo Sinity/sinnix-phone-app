@@ -14,7 +14,7 @@ import java.io.File
  * name. Keeping it requires all-files access, because scoped storage makes
  * every other writable location invisible to a different app's uid.
  *
- * The estate directory is the app's own record — events, epoch, outbox, inbox.
+ * The phone directory is the app's own record — events, epoch, outbox, inbox.
  * It is deliberately NOT the chunk directory, because that one has exactly one
  * meaning to the drain (audio, rotated and deleted once the lake holds it) and
  * `--remove-source-files` pointed at an event log is a data-loss bug waiting
@@ -30,7 +30,7 @@ object Storage {
     const val TAG = "sinnix-ambient"
 
     const val SHARED_DIR = "/sdcard/sinnix-ambient"
-    const val ESTATE_DIR = "/sdcard/sinnix-phone"
+    const val PHONE_DIR = "/sdcard/sinnix-phone"
 
     /** Estate subdirectories. Named here so no caller spells one differently. */
     const val EVENTS = "events"
@@ -61,15 +61,15 @@ object Storage {
         return dir != null && dir.absolutePath != SHARED_DIR
     }
 
-    /** `<estate>/<name>`, created on demand, or null if nothing is writable. */
-    fun estateDir(ctx: Context, name: String?): File? {
-        var base = File(ESTATE_DIR)
+    /** `<phone>/<name>`, created on demand, or null if nothing is writable. */
+    fun phoneDir(ctx: Context, name: String?): File? {
+        var base = File(PHONE_DIR)
         if (!haveAllFilesAccess() || !(base.isDirectory || base.mkdirs()) || !base.canWrite()) {
-            base = File(ctx.getExternalFilesDir(null), "estate")
+            base = File(ctx.getExternalFilesDir(null), "phone")
         }
         val dir = if (name == null) base else File(base, name)
         if (dir.isDirectory || dir.mkdirs()) return dir
-        Log.w(TAG, "no writable estate directory at $dir")
+        Log.w(TAG, "no writable phone directory at $dir")
         return null
     }
 

@@ -128,7 +128,7 @@ object OfferPolicy {
                 return Ask(
                     "An agent is waiting on you",
                     first.optString("text"),
-                    "estate",
+                    "prime",
                 )
             }
         }

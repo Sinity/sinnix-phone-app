@@ -42,7 +42,7 @@ import org.json.JSONObject
 /**
  * The companion face.
  *
- * Three things, in this order: what the estate wants you to know (usually
+ * Three things, in this order: what prime wants you to know (usually
  * nothing), the single thing it is asking of you (often nothing), and the
  * verbs. Everything else is a tab away.
  *
@@ -134,7 +134,7 @@ fun HomeScreen(nav: NavController) {
 }
 
 /**
- * The estate's verdict, and the resting state is nothing.
+ * Prime's verdict, and the resting state is nothing.
  *
  * Collapses to one quiet line when there is nothing wrong. Absence is the
  * healthy state — a counter that always shows a number trains the eye to stop
@@ -158,9 +158,9 @@ private fun GlanceStrip(
         ) {
             Text(
                 when {
-                    glance == null -> "estate unknown"
-                    quiet -> verdict.ifEmpty { "estate quiet" }
-                    else -> verdict.ifEmpty { "estate wants you" }
+                    glance == null -> "prime unknown"
+                    quiet -> verdict.ifEmpty { "all quiet" }
+                    else -> verdict.ifEmpty { "prime wants you" }
                 },
                 style = MaterialTheme.typography.titleMedium,
                 color = if (quiet) Palette.TextDim else Palette.Text,

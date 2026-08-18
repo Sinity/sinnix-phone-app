@@ -1,4 +1,4 @@
-package dev.sinnix.phone.ui.estate
+package dev.sinnix.phone.ui.prime
 
 import android.content.Intent
 import android.net.Uri
@@ -37,7 +37,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * The estate remote.
+ * The prime remote.
  *
  * What it does: shows the verdict, lists what agents are doing, answers their
  * questions, and offers the bounded actions the hub's own API accepts.
@@ -52,7 +52,7 @@ import org.json.JSONObject
  * inheriting it is why there is no second control plane.
  */
 @Composable
-fun EstateScreen(nav: NavController) {
+fun PrimeScreen(nav: NavController) {
     val ctx = LocalContext.current
     val transport = remember { AppGraph.transport(ctx) }
     val scope = rememberCoroutineScope()
@@ -86,7 +86,7 @@ fun EstateScreen(nav: NavController) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    glance?.optString("verdict")?.ifEmpty { "estate quiet" } ?: "estate unknown",
+                    glance?.optString("verdict")?.ifEmpty { "all quiet" } ?: "prime unknown",
                     style = MaterialTheme.typography.titleLarge,
                     color = Palette.Text,
                 )

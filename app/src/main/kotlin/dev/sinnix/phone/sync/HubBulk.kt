@@ -17,7 +17,7 @@ import org.json.JSONObject
 /**
  * The transfer half of the phone's one plane.
  *
- * [dev.sinnix.phone.estate.HubClient] carries the control plane -- small JSON
+ * [dev.sinnix.phone.prime.HubClient] carries the control plane -- small JSON
  * objects, short timeouts, a failed call means "fall back". This carries
  * bytes: event batches up, capture files up, inbox entries down. Different
  * timeouts (a multi-megabyte body over a relayed tailnet is not a screen

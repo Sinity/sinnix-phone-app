@@ -78,7 +78,7 @@ class EventUploader(context: Context) {
 
     private fun uploadPending() {
         if (!Prefs.uploadEvents(ctx)) return
-        val dir = Storage.estateDir(ctx, Storage.EVENTS) ?: return note("no events directory")
+        val dir = Storage.phoneDir(ctx, Storage.EVENTS) ?: return note("no events directory")
         val files =
             dir.listFiles { f -> f.isFile && DAY_FILE.matches(f.name) }
                 ?.sortedBy { it.name }
@@ -193,7 +193,7 @@ class EventUploader(context: Context) {
 
     /** How far behind prime this phone is, in bytes. Rendered, never guessed at. */
     fun pendingBytes(): Long {
-        val dir = Storage.estateDir(ctx, Storage.EVENTS) ?: return 0
+        val dir = Storage.phoneDir(ctx, Storage.EVENTS) ?: return 0
         val files = dir.listFiles { f -> f.isFile && DAY_FILE.matches(f.name) } ?: return 0
         return files.sumOf { f ->
             val cursor = cursorOf(f.name)

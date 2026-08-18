@@ -4,7 +4,7 @@ import android.content.Context
 import android.util.Log
 import dev.sinnix.phone.core.Events
 import dev.sinnix.phone.core.Storage
-import dev.sinnix.phone.estate.HubClient
+import dev.sinnix.phone.prime.HubClient
 import java.io.File
 import org.json.JSONObject
 
@@ -22,7 +22,7 @@ import org.json.JSONObject
  * else rides. Two kinds of file, two routes:
  *
  * - `intent-*.json` is a request, and goes to /intent, which EXECUTES it. The
- *   same route [dev.sinnix.phone.estate.Transport] posts to when it is live,
+ *   same route [dev.sinnix.phone.prime.Transport] posts to when it is live,
  *   with the same object and the same `send_token` -- so an intent that went
  *   out live and was queued anyway executes once and still gets its receipt.
  *   That is the token's entire job and the reason this can be dumb.
@@ -63,7 +63,7 @@ class OutboxUploader(context: Context) {
     }
 
     private fun drain() {
-        val dir = Storage.estateDir(ctx, Storage.OUTBOX) ?: return note("no outbox directory")
+        val dir = Storage.phoneDir(ctx, Storage.OUTBOX) ?: return note("no outbox directory")
         // `.part` is still being written; `.rejected` is something prime has
         // already refused and this pass must not offer again (nor mistake for
         // a blob, since it no longer ends in .json).

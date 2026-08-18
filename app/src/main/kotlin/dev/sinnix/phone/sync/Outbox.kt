@@ -64,7 +64,7 @@ object Outbox {
     }
 
     private fun write(ctx: Context, name: String, o: JSONObject): Boolean {
-        val dir = Storage.estateDir(ctx, Storage.OUTBOX)
+        val dir = Storage.phoneDir(ctx, Storage.OUTBOX)
         if (dir == null) {
             Log.w(Storage.TAG, "no outbox directory; intent ${o.optString("kind")} dropped")
             return false
@@ -89,7 +89,7 @@ object Outbox {
      * lake can pair them without a manifest.
      */
     fun blobFile(ctx: Context, prefix: String, extension: String): File? {
-        val dir = Storage.estateDir(ctx, Storage.OUTBOX) ?: return null
+        val dir = Storage.phoneDir(ctx, Storage.OUTBOX) ?: return null
         return File(dir, "$prefix-${Stamps.compact(System.currentTimeMillis())}.$extension")
     }
 
@@ -108,7 +108,7 @@ object Outbox {
 
     /** How many intents are still waiting for a drain. Rendered, never guessed at. */
     fun pendingCount(ctx: Context): Int {
-        val dir = Storage.estateDir(ctx, Storage.OUTBOX) ?: return 0
+        val dir = Storage.phoneDir(ctx, Storage.OUTBOX) ?: return 0
         return dir.listFiles { _, name -> name.startsWith("intent-") && name.endsWith(".json") }
             ?.size ?: 0
     }

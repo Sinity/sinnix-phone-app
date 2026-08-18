@@ -32,7 +32,7 @@ object Events {
     private const val MAX_LINE_BYTES = 1 shl 20
 
     fun fileFor(ctx: Context, atMs: Long): File? {
-        val dir = Storage.estateDir(ctx, Storage.EVENTS) ?: return null
+        val dir = Storage.phoneDir(ctx, Storage.EVENTS) ?: return null
         return File(dir, PREFIX + Stamps.day(atMs) + SUFFIX)
     }
 
@@ -82,7 +82,7 @@ object Events {
      */
     fun recent(ctx: Context, days: Int): List<JSONObject> {
         val out = ArrayList<JSONObject>()
-        val dir = Storage.estateDir(ctx, Storage.EVENTS) ?: return out
+        val dir = Storage.phoneDir(ctx, Storage.EVENTS) ?: return out
         val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
         cal.add(Calendar.DAY_OF_YEAR, -(days - 1))
         repeat(days) {

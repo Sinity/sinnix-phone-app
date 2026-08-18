@@ -1,4 +1,4 @@
-package dev.sinnix.phone.estate
+package dev.sinnix.phone.prime
 
 import android.content.Context
 import android.content.Intent

@@ -33,7 +33,7 @@ import org.json.JSONObject
  */
 object Inbox {
 
-    fun dir(ctx: Context): File? = Storage.estateDir(ctx, Storage.INBOX)
+    fun dir(ctx: Context): File? = Storage.phoneDir(ctx, Storage.INBOX)
 
     fun sub(ctx: Context, name: String): File? =
         dir(ctx)?.let { File(it, name).apply { if (!isDirectory) mkdirs() } }
@@ -91,7 +91,7 @@ object Inbox {
             Notifications.postNeedsYou(
                 ctx,
                 id,
-                o.optString("title", "Estate"),
+                o.optString("title", "Prime"),
                 o.optString("body", o.optString("text", "")),
                 o.optString("route").ifEmpty { null },
             )
