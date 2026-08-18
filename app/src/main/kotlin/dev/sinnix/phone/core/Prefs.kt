@@ -27,7 +27,8 @@ object Prefs {
     private const val KEY_POWER = "power_lane_enabled"
     private const val KEY_HR_LIVE = "hr_live_lane_enabled"
     private const val KEY_USAGE = "usage_lane_enabled"
-    private const val KEY_STREAM_EVENTS = "stream_events_enabled"
+    private const val KEY_UPLOAD_EVENTS = "upload_events_enabled"
+    private const val KEY_MIRROR_MEDIA = "mirror_media_enabled"
     private const val KEY_UPLOAD_CHUNKS = "upload_chunks_enabled"
     private const val KEY_UPLOAD_METERED = "upload_chunks_metered"
     private const val KEY_WAKE_HOUR = "wake_hour"
@@ -164,11 +165,33 @@ object Prefs {
     fun setSleepDetect(ctx: Context, value: Boolean) =
         prefs(ctx).edit().putBoolean(KEY_SLEEP_DETECT, value).apply()
 
-    /** Live mirror of new event lines to prime's receiver. */
-    fun streamEvents(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_STREAM_EVENTS, true)
+    /**
+     * The app ships its own event log to prime, in order and completely.
+     *
+     * This replaced a live TCP mirror of new lines into a separate capture
+     * lane. The mirror could not be the record -- its cursor started at the
+     * end of the current day file, so anything written while it was off, or
+     * before it first ran, was structurally unreachable -- and keeping both
+     * meant every event existed twice in two shapes. One acknowledged,
+     * cursor-exact push on the same heartbeat is what the mirror was for and
+     * what the drain was for.
+     */
+    fun uploadEvents(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_UPLOAD_EVENTS, true)
 
-    fun setStreamEvents(ctx: Context, value: Boolean) =
-        prefs(ctx).edit().putBoolean(KEY_STREAM_EVENTS, value).apply()
+    fun setUploadEvents(ctx: Context, value: Boolean) =
+        prefs(ctx).edit().putBoolean(KEY_UPLOAD_EVENTS, value).apply()
+
+    /**
+     * Camera and Downloads, copied to the lake by the app itself.
+     *
+     * On, like every other lane, and gated by [uploadOnMetered] like every
+     * other bulk one. It is a copy and never a move: these are the operator's
+     * files, not capture the phone is holding on prime's behalf.
+     */
+    fun mirrorMedia(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_MIRROR_MEDIA, true)
+
+    fun setMirrorMedia(ctx: Context, value: Boolean) =
+        prefs(ctx).edit().putBoolean(KEY_MIRROR_MEDIA, value).apply()
 
     /**
      * The phone ships its own finalized ambient chunks to prime.

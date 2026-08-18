@@ -11,10 +11,14 @@ import java.io.File
 import org.json.JSONObject
 
 /**
- * The phone's inbound half: what prime pushes down.
+ * The phone's inbound half: what prime has, once the app has fetched it.
  *
- * Four kinds of file, all JSON, all written by the drain into
- * `/sdcard/sinnix-phone/inbox/`:
+ * Five kinds of file, all JSON, all written into
+ * `/sdcard/sinnix-phone/inbox/` by [InboxFetcher] -- prime used to rsync them
+ * here on a timer, and now it holds them until the phone comes and takes
+ * them. Nothing below changed with that inversion: the same directory, the
+ * same atomic writes, the same FileObserver. What changed is that a phone
+ * that is not reachable from prime still gets its receipts.
  *
  * - `steering.json` — the standing menu, open commitments, the ready queue.
  * - `glance.json` — the estate's verdict, as data rather than as a page.
@@ -24,7 +28,8 @@ import org.json.JSONObject
  *
  * Receipts and notifications are consumed: rendered as a notification and then
  * deleted, because a receipt that stays is a receipt that reappears. Steering,
- * glance and decks are state, and are read where they lie.
+ * glance and decks are state, and are read where they lie. Prime draws the
+ * same line -- a confirmed receipt is deleted there, a confirmed deck is not.
  */
 object Inbox {
 
@@ -151,8 +156,10 @@ object Inbox {
  *
  * [FileObserver] rather than a poll: the arrival is an event the kernel already
  * knows about, and a phone that is asleep should not be woken to discover
- * nothing changed. The watchdog alarm sweeps as a backstop for the case where
- * capture is off and nothing is watching.
+ * nothing changed. Still worth having now that the app fetches its own inbox
+ * -- [InboxFetcher] writes into this directory, and a rename is exactly what
+ * this is waiting for. The watchdog alarm sweeps as a backstop for the case
+ * where capture is off and nothing is watching.
  */
 class InboxWatcher(context: Context) {
 
@@ -183,8 +190,13 @@ class InboxWatcher(context: Context) {
     companion object {
         /** The backstop: called from the watchdog alarm and on app resume. */
         fun sweepOnce(ctx: Context) {
-            // The estate line on the widget comes from inbox/glance.json, so a
-            // drain is the other event that changes what it says.
+            // Fetch first, then render what is here. This runs from the
+            // watchdog alarm and on app resume -- both are moments where the
+            // service may be down and nothing else is asking prime what it
+            // has, and the glance the widget is about to redraw is exactly
+            // what a fetch would refresh. The fetcher does its own work on a
+            // background thread; this call only starts it.
+            InboxFetcher(ctx).tick(force = true)
             dev.sinnix.phone.ui.widget.SinnixWidget.refresh(ctx)
             val shown = Inbox.drainNotifications(ctx)
             if (shown > 0) {

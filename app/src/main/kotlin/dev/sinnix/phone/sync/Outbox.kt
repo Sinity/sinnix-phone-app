@@ -10,8 +10,13 @@ import java.util.UUID
 import org.json.JSONObject
 
 /**
- * The phone's outbound half: intents and blobs the drain collects and prime
+ * The phone's outbound half: intents and blobs the app ships and prime
  * executes.
+ *
+ * This is the spool, not the transport. Writing here is what makes an action
+ * survive a phone with no network -- [OutboxUploader] drains it on the
+ * capture heartbeat, and prime used to come and collect it on a timer, which
+ * is the only thing about this file that has changed.
  *
  * An intent is a *request*, never an action. The app has no authority to send
  * anything on the operator's behalf — it writes what it would like done, prime
@@ -19,10 +24,12 @@ import org.json.JSONObject
  * exist on a device that is offline half the time without ever lying about
  * what happened.
  *
- * Every intent carries a `send_token`. The drain may collect the same file
- * twice (a transfer that succeeded after its exit status said otherwise), and
- * the dispatcher on prime uses the token to make the second execution a no-op.
- * Idempotency is the token's whole job; nothing else about it is meaningful.
+ * Every intent carries a `send_token`. The same object can legitimately reach
+ * prime twice -- posted live and then queued by a retry, or delivered by an
+ * upload whose acknowledgement was lost on the way back -- and the dispatcher
+ * uses the token to make the second execution a no-op that still emits its
+ * receipt. Idempotency is the token's whole job; nothing else about it is
+ * meaningful.
  */
 object Outbox {
 

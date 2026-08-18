@@ -179,7 +179,7 @@ private fun GlanceStrip(
         }
         if (pending > 0) {
             Text(
-                "$pending queued for the next drain",
+                "$pending queued, retrying every heartbeat",
                 style = MaterialTheme.typography.labelSmall,
                 color = Palette.Unverified,
             )

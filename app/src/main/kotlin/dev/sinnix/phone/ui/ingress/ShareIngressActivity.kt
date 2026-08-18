@@ -159,7 +159,7 @@ private fun Confirmation(summary: String, onDone: () -> Unit) {
     ) {
         Text(summary, style = MaterialTheme.typography.titleMedium, color = Palette.Text)
         Text(
-            "it goes out with the next drain",
+            "it goes out as soon as prime answers",
             style = MaterialTheme.typography.labelSmall,
             color = Palette.TextFaint,
         )

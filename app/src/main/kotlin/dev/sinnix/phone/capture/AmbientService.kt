@@ -57,7 +57,15 @@ class AmbientService : Service() {
     private var passive: PassiveLanes? = null
     private var heartRate: HeartRateLane? = null
     private var usage: UsageLane? = null
-    private var eventStream: dev.sinnix.phone.estate.EventStreamLane? = null
+    // The one transport plane, in four lanes: the event log, the outbox
+    // spool, the inbox fetch, and the media mirror. All of them ride this
+    // service's heartbeat rather than a schedule of their own, because this
+    // process is already awake every 20s and each of them is cheap when there
+    // is nothing to do.
+    private var eventUploader: dev.sinnix.phone.sync.EventUploader? = null
+    private var outboxUploader: dev.sinnix.phone.sync.OutboxUploader? = null
+    private var inboxFetcher: dev.sinnix.phone.sync.InboxFetcher? = null
+    private var mediaMirror: dev.sinnix.phone.sync.MediaMirror? = null
     private var chunkUploader: ChunkUploader? = null
     private var location: dev.sinnix.phone.ingress.LocationLane? = null
 
@@ -86,7 +94,10 @@ class AmbientService : Service() {
         passive = PassiveLanes(this)
         heartRate = HeartRateLane(this)
         usage = UsageLane(this)
-        eventStream = dev.sinnix.phone.estate.EventStreamLane(this)
+        eventUploader = dev.sinnix.phone.sync.EventUploader(this)
+        outboxUploader = dev.sinnix.phone.sync.OutboxUploader(this)
+        inboxFetcher = dev.sinnix.phone.sync.InboxFetcher(this)
+        mediaMirror = dev.sinnix.phone.sync.MediaMirror(this)
         chunkUploader = ChunkUploader(this)
         location = dev.sinnix.phone.ingress.LocationLane(this).also { it.start() }
         // The capture preference lives in credential-protected storage, which
@@ -330,7 +341,14 @@ class AmbientService : Service() {
         passive?.tick()
         heartRate?.tick()
         usage?.tick()
-        eventStream?.tick()
+        // The transport plane. Each lane decides for itself whether this tick
+        // is one it acts on: events and the outbox go every heartbeat (they
+        // are kilobytes and their value is latency), the inbox fetch every
+        // third, the media mirror every thirtieth.
+        eventUploader?.tick()
+        outboxUploader?.tick()
+        inboxFetcher?.tick()
+        mediaMirror?.tick()
         // Ships only chunks the recorder has already closed, so it can never
         // race the file this heartbeat is measuring.
         chunkUploader?.tick()

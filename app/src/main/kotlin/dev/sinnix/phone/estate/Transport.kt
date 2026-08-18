@@ -19,7 +19,7 @@ import org.json.JSONObject
  */
 enum class Path(val label: String) {
     LIVE("sent · live"),
-    QUEUED("queued · next drain"),
+    QUEUED("queued · retrying"),
     FAILED("not sent"),
 }
 
