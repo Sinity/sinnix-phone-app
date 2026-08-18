@@ -1,28 +1,19 @@
 package dev.sinnix.phone.capture
 
 import android.content.Context
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.util.Log
 import dev.sinnix.phone.core.Events
 import dev.sinnix.phone.core.Prefs
 import dev.sinnix.phone.core.Storage
-import java.io.File
-import java.security.MessageDigest
-import java.util.concurrent.TimeUnit
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
+import dev.sinnix.phone.sync.HubBulk
 
 /**
  * The archive ships itself.
  *
  * Ambient chunks used to leave this phone only when prime came and took them:
  * a half-hourly drain that ssh'd into Termux and rsynced `/sdcard/sinnix-
- * ambient`. That made the estate's largest data path depend on the estate's
- * least reliable component -- Termux does not survive a reboot, its sshd only
+ * ambient`. That made the largest data path here depend on the least
+ * reliable component in it -- Termux does not survive a reboot, its sshd only
  * runs while it does, and a storage-blind sshd answers rsync with an empty
  * listing and exit 0. Every one of those failures is silent on the phone and
  * looks like "no audio yet" on prime.
@@ -60,18 +51,13 @@ class ChunkUploader(context: Context) {
     /** Reported once per transition, so a week offline is one event, not thousands. */
     private var lastFailure: String? = null
 
-    private val http =
-        OkHttpClient.Builder()
-            .connectTimeout(6, TimeUnit.SECONDS)
-            // Minutes, not seconds: this is a multi-megabyte body over a
-            // tailnet that may be routing through a relay. The control plane's
-            // short timeouts exist so a screen fails fast; nothing is waiting
-            // on this one.
-            .writeTimeout(2, TimeUnit.MINUTES)
-            .readTimeout(1, TimeUnit.MINUTES)
-            .callTimeout(3, TimeUnit.MINUTES)
-            .retryOnConnectionFailure(false)
-            .build()
+    // The transfer client every bulk lane shares. Its timeouts are this
+    // lane's old ones -- minutes, not seconds, because a multi-megabyte body
+    // over a relayed tailnet is not a screen waiting on a spinner -- and its
+    // three-outcome answer is this lane's old distinction between "prime said
+    // no" and "nobody answered", which is the difference between keeping a
+    // chunk and losing it.
+    private val hub = HubBulk(ctx)
 
     fun tick() {
         if (!busy.compareAndSet(false, true)) return
@@ -88,7 +74,7 @@ class ChunkUploader(context: Context) {
 
     private fun uploadPending() {
         if (!Prefs.uploadChunks(ctx)) return
-        if (!unmetered()) return note("metered")
+        if (!hub.unmeteredOrAllowed()) return note("metered")
         val dir = Storage.chunkDir(ctx) ?: return note("no chunk directory")
 
         val pending =
@@ -129,52 +115,26 @@ class ChunkUploader(context: Context) {
     /**
      * True only for a body prime confirmed it wrote.
      *
-     * A 2xx alone is not that confirmation: the route answers `ok:false` for a
-     * hash mismatch, an unknown lane, and a name it will not accept, and each
-     * of those must leave the local copy in place.
+     * A 2xx alone is not that confirmation, and neither is silence: the route
+     * answers `ok:false` for a hash mismatch, an unknown lane and a name it
+     * will not accept, and each of those must leave the local copy in place
+     * exactly as an unreachable prime does. [HubBulk] keeps those two apart,
+     * and tries the second hub base only when the first did not answer at all
+     * -- a refusal comes from the same prime either way, so asking it twice
+     * would only slow the honest answer down.
      */
-    private fun upload(name: String, body: ByteArray): Boolean {
-        val digest = sha256(body)
-        // Each candidate base in turn: the MagicDNS name resolves on this
-        // phone about as reliably as it did for the receiver, which is to say
-        // it stopped one day and nothing said so. Re-uploading to the second
-        // base after the first failed is free, because prime answers a chunk
-        // it already holds with ok rather than a conflict.
-        //
-        // Only the LAST candidate's reason is reported, and only if every one
-        // failed. A first attempt that fails and a second that works is a
-        // successful upload, not a blocked lane; saying otherwise would file
-        // a `chunk_upload_blocked` event beside every single chunk this phone
-        // ships, which is how a signal stops being read.
-        var reason: String? = null
-        for (base in Prefs.hubCandidates(ctx)) {
-            when (val outcome = uploadTo("$base$ROUTE?lane=ambient&name=$name", digest, body)) {
-                null -> return true
-                else -> reason = outcome
+    private fun upload(name: String, body: ByteArray): Boolean =
+        when (val reply = hub.post("${HubBulk.PHONE}/chunk?lane=ambient&name=$name", body)) {
+            is HubBulk.Reply.Ok -> true
+            is HubBulk.Reply.Refused -> {
+                note("prime refused ${reply.code}: ${reply.detail.take(120)}")
+                false
+            }
+            HubBulk.Reply.Unreachable -> {
+                note("unreachable")
+                false
             }
         }
-        note(reason)
-        return false
-    }
-
-    /** Null on success; otherwise the reason this base did not take it. */
-    private fun uploadTo(url: String, digest: String, body: ByteArray): String? {
-        val request =
-            Request.Builder()
-                .url(url)
-                .header("X-Sinnix-Sha256", digest)
-                .post(body.toRequestBody(OCTETS))
-                .build()
-        return try {
-            http.newCall(request).execute().use { response ->
-                val text = response.body?.string().orEmpty()
-                if (response.isSuccessful && JSONObject(text).optBoolean("ok", false)) null
-                else "prime refused ${response.code}: ${text.take(200)}"
-            }
-        } catch (e: Exception) {
-            "unreachable: ${e.javaClass.simpleName}"
-        }
-    }
 
     /** Records a state change in the upload path, and only a change. */
     private fun note(reason: String?) {
@@ -201,21 +161,7 @@ class ChunkUploader(context: Context) {
             !name.startsWith("status.json") &&
             (name.endsWith(".m4a") || name.endsWith(".m4a.orphan"))
 
-    private fun unmetered(): Boolean {
-        if (Prefs.uploadOnMetered(ctx)) return true
-        val cm = ctx.getSystemService(ConnectivityManager::class.java) ?: return false
-        val caps = cm.getNetworkCapabilities(cm.activeNetwork ?: return false) ?: return false
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) &&
-            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-    }
-
-    private fun sha256(body: ByteArray): String =
-        MessageDigest.getInstance("SHA-256").digest(body).joinToString("") { "%02x".format(it) }
-
     companion object {
-        private const val ROUTE = "/phone/v1/chunk"
-        private val OCTETS = "application/octet-stream".toMediaType()
-
         /**
          * Four per heartbeat (20s) drains a backlog at roughly 12 chunks a
          * minute -- an hour of accumulated audio clears in about a minute --
