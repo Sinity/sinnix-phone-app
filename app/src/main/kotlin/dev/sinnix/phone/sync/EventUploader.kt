@@ -4,7 +4,6 @@ import android.content.Context
 import android.util.Log
 import dev.sinnix.phone.core.Events
 import dev.sinnix.phone.core.Prefs
-import dev.sinnix.phone.core.Stamps
 import dev.sinnix.phone.core.Storage
 import java.io.File
 import java.io.RandomAccessFile
@@ -218,8 +217,5 @@ class EventUploader(context: Context) {
          */
         private const val MAX_BATCH_BYTES = 512L shl 10
         private const val MAX_BATCHES_PER_TICK = 4
-
-        /** Today's day-file name, for callers that need to know what is live. */
-        fun todayFile(): String = PREFIX + Stamps.day(System.currentTimeMillis()) + SUFFIX
     }
 }

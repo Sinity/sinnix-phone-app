@@ -70,7 +70,8 @@ class InboxFetcher(context: Context) {
         var landed = 0
         for (i in 0 until files.length()) {
             val entry = files.optJSONObject(i) ?: continue
-            val name = entry.optString("name").ifEmpty { continue }
+            val name = entry.optString("name")
+            if (name.isEmpty()) continue
             val sha = entry.optString("sha256")
             val target = File(root, name)
             if (target.isFile && HubBulk.sha256(target.readBytes()).equals(sha, true)) {
