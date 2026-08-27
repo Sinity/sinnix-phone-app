@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.media.MediaRecorder
 import android.os.Build
+import android.os.UserManager
 import android.util.Log
 import dev.sinnix.phone.core.Events
 import dev.sinnix.phone.core.Stamps
@@ -202,6 +203,11 @@ class DirectBootService : android.app.Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            close()
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        if (getSystemService(UserManager::class.java)?.isUserUnlocked != false) {
             close()
             stopSelf()
             return START_NOT_STICKY
