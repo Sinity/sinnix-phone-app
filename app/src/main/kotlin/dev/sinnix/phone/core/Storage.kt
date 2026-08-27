@@ -75,7 +75,7 @@ object Storage {
 
     /**
      * Write a file the way every durable record here is written: into a
-     * sibling `.tmp`, fsynced, then renamed over the destination.
+     * hidden sibling, fsynced, then renamed over the destination.
      *
      * The drain and the desktop both poll these paths. A torn read of a
      * half-written document is indistinguishable from a crashed writer, and
@@ -83,22 +83,28 @@ object Storage {
      * other forms.
      */
     fun writeAtomically(dest: File, bytes: ByteArray): Boolean {
-        val tmp = File(dest.parentFile, dest.name + ".tmp")
+        // A visible temporary file is indexed by MediaProvider on shared
+        // storage. Renaming its row onto the existing destination then violates
+        // MediaProvider's unique path constraint even though the filesystem
+        // rename succeeds. Hidden files are excluded from that index.
+        var tmp: File? = null
         return try {
-            java.io.FileOutputStream(tmp).use { out ->
+            val candidate = File.createTempFile(".${dest.name}.", ".tmp", dest.parentFile)
+            tmp = candidate
+            java.io.FileOutputStream(candidate).use { out ->
                 out.write(bytes)
                 out.fd.sync()
             }
-            if (tmp.renameTo(dest)) {
+            if (candidate.renameTo(dest)) {
                 true
             } else {
                 Log.w(TAG, "could not replace ${dest.name}")
-                tmp.delete()
+                candidate.delete()
                 false
             }
         } catch (e: Exception) {
             Log.w(TAG, "could not write ${dest.name}", e)
-            tmp.delete()
+            tmp?.delete()
             false
         }
     }
