@@ -28,6 +28,11 @@ class BootReceiver : BroadcastReceiver() {
         Events.record(ctx, "boot", "action", action.toString(), "enabled", Prefs.enabled(ctx))
         Watchdog.schedule(ctx)
         if (!Prefs.enabled(ctx)) return
+        // USER_UNLOCKED is not reliable on every ROM. BOOT_COMPLETED is the
+        // credential-unlocked handoff, so retire the direct-boot recorder
+        // before opening the canonical recorder.
+        DirectBootService.stop(ctx)
+        DirectBoot.migrate(ctx)
         AmbientService.start(ctx)
     }
 }

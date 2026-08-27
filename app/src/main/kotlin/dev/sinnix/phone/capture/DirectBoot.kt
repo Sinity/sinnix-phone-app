@@ -198,15 +198,21 @@ class DirectBootService : android.app.Service() {
     private var recorder: MediaRecorder? = null
     private var current: File? = null
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val unlockCheck = object : Runnable {
+        override fun run() {
+            if (getSystemService(UserManager::class.java)?.isUserUnlocked != false) {
+                close()
+                stopSelf()
+                DirectBoot.migrate(this@DirectBootService)
+                return
+            }
+            handler.postDelayed(this, UNLOCK_CHECK_MILLIS)
+        }
+    }
 
     override fun onBind(intent: Intent?): android.os.IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            close()
-            stopSelf()
-            return START_NOT_STICKY
-        }
         if (getSystemService(UserManager::class.java)?.isUserUnlocked != false) {
             close()
             stopSelf()
@@ -222,6 +228,8 @@ class DirectBootService : android.app.Service() {
                 .build(),
         )
         rotate()
+        handler.removeCallbacks(unlockCheck)
+        handler.postDelayed(unlockCheck, UNLOCK_CHECK_MILLIS)
         return START_STICKY
     }
 
@@ -286,8 +294,8 @@ class DirectBootService : android.app.Service() {
     }
 
     companion object {
-        const val ACTION_STOP = "dev.sinnix.phone.DIRECT_BOOT_STOP"
         private const val NOTIFICATION_ID = 4715
+        private const val UNLOCK_CHECK_MILLIS = 2_000L
 
         fun start(ctx: Context) {
             try {
@@ -298,9 +306,7 @@ class DirectBootService : android.app.Service() {
         }
 
         fun stop(ctx: Context) {
-            ctx.startService(
-                Intent(ctx, DirectBootService::class.java).setAction(ACTION_STOP)
-            )
+            ctx.stopService(Intent(ctx, DirectBootService::class.java))
         }
     }
 }
