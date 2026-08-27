@@ -73,21 +73,10 @@ object Storage {
         return null
     }
 
-    /**
-     * Write a file the way every durable record here is written: into a
-     * hidden sibling, fsynced, then renamed over the destination.
-     *
-     * The drain and the desktop both poll these paths. A torn read of a
-     * half-written document is indistinguishable from a crashed writer, and
-     * that misreading is the exact failure this whole program keeps hitting in
-     * other forms.
-     */
+    /** Write a complete file and expose it without ever exposing partial bytes. */
     fun writeAtomically(dest: File, bytes: ByteArray): Boolean {
-        // A visible temporary file is indexed by MediaProvider on shared
-        // storage. Renaming its row onto the existing destination then violates
-        // MediaProvider's unique path constraint even though the filesystem
-        // rename succeeds. Hidden files are excluded from that index.
         var tmp: File? = null
+        var backup: File? = null
         return try {
             val candidate = File.createTempFile(".${dest.name}.", ".tmp", dest.parentFile)
             tmp = candidate
@@ -95,17 +84,37 @@ object Storage {
                 out.write(bytes)
                 out.fd.sync()
             }
+
+            // Shared-storage FUSE registers hidden files too. Renaming a new
+            // inode directly over an indexed destination makes MediaProvider
+            // repair a duplicate-path row on every heartbeat. Move the old
+            // inode aside first; readers can briefly see no file, never a torn
+            // one, and the old copy remains available if publication fails.
+            if (dest.exists()) {
+                val old = File.createTempFile(".${dest.name}.", ".old", dest.parentFile)
+                if (!old.delete() || !dest.renameTo(old)) {
+                    Log.w(TAG, "could not stage existing ${dest.name}")
+                    candidate.delete()
+                    return false
+                }
+                backup = old
+            }
             if (candidate.renameTo(dest)) {
+                backup?.delete()
                 true
             } else {
                 Log.w(TAG, "could not replace ${dest.name}")
+                backup?.renameTo(dest)
                 candidate.delete()
                 false
             }
         } catch (e: Exception) {
             Log.w(TAG, "could not write ${dest.name}", e)
+            if (!dest.exists()) backup?.renameTo(dest)
             tmp?.delete()
             false
+        } finally {
+            if (dest.exists()) backup?.delete()
         }
     }
 
