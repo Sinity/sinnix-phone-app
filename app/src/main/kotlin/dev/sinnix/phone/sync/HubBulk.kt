@@ -69,12 +69,17 @@ class HubBulk(context: Context) {
      * by twice.
      */
     fun post(path: String, body: ByteArray, sha: String = sha256(body)): Reply {
+        if (!HubAvailability.mayAttempt(ctx)) return Reply.Unreachable
         var last: Reply = Reply.Unreachable
         for (base in Prefs.hubCandidates(ctx)) {
             val reply = postTo(base + path, body, sha)
-            if (reply !is Reply.Unreachable) return reply
+            if (reply !is Reply.Unreachable) {
+                HubAvailability.succeeded()
+                return reply
+            }
             last = reply
         }
+        HubAvailability.failed()
         return last
     }
 
@@ -106,16 +111,21 @@ class HubBulk(context: Context) {
 
     /** A JSON answer from a phone route, or null when nobody answered. */
     fun getJson(path: String): JSONObject? {
+        if (!HubAvailability.mayAttempt(ctx)) return null
         for (base in Prefs.hubCandidates(ctx)) {
             try {
                 http.newCall(Request.Builder().url(base + path).get().build()).execute().use { r ->
                     val text = r.body?.string()
-                    if (r.isSuccessful && text != null) return JSONObject(text)
+                    if (r.isSuccessful && text != null) {
+                        HubAvailability.succeeded()
+                        return JSONObject(text)
+                    }
                 }
             } catch (e: Exception) {
                 Log.i(Storage.TAG, "hub-bulk: GET $base$path failed: ${e.javaClass.simpleName}")
             }
         }
+        HubAvailability.failed()
         return null
     }
 
@@ -128,6 +138,7 @@ class HubBulk(context: Context) {
      * truncated deck is an instrument that runs wrong.
      */
     fun getBytes(path: String): ByteArray? {
+        if (!HubAvailability.mayAttempt(ctx)) return null
         for (base in Prefs.hubCandidates(ctx)) {
             try {
                 http.newCall(Request.Builder().url(base + path).get().build()).execute().use { r ->
@@ -138,12 +149,14 @@ class HubBulk(context: Context) {
                         Log.w(Storage.TAG, "hub-bulk: $base$path arrived with the wrong sha256")
                         return@use
                     }
+                    HubAvailability.succeeded()
                     return bytes
                 }
             } catch (e: Exception) {
                 Log.i(Storage.TAG, "hub-bulk: GET $base$path failed: ${e.javaClass.simpleName}")
             }
         }
+        HubAvailability.failed()
         return null
     }
 
