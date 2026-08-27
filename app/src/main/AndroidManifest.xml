@@ -239,6 +239,27 @@
         android:foregroundServiceType="microphone"
         android:stopWithTask="false" />
 
+    <!-- The selected voice interaction service is kept resident by Android and
+         may start a microphone foreground service with while-in-use capability.
+         This lets capture recover after a process kill without manufacturing a
+         visible activity. It does not run a second recorder or a hotword engine. -->
+    <service
+        android:name=".voice.SinnixVoiceInteractionService"
+        android:exported="true"
+        android:permission="android.permission.BIND_VOICE_INTERACTION">
+      <intent-filter>
+        <action android:name="android.service.voice.VoiceInteractionService" />
+      </intent-filter>
+      <meta-data
+          android:name="android.voice_interaction"
+          android:resource="@xml/voice_interaction_service" />
+    </service>
+
+    <service
+        android:name=".voice.SinnixVoiceInteractionSessionService"
+        android:exported="true"
+        android:permission="android.permission.BIND_VOICE_INTERACTION" />
+
     <!--
       Capture before first unlock. directBootAware is the whole point: this is
       the only component that exists at all between power-on and the operator
