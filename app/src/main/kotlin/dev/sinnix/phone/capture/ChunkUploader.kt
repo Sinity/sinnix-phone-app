@@ -26,18 +26,14 @@ import dev.sinnix.phone.sync.HubBulk
  * body, a full disk on the other side all leave the audio exactly where it
  * was, to be retried on the next heartbeat.
  *
- * HTTP through the hub rather than the receiver's socket, deliberately. The
- * receiver speaks line-delimited JSON sized for VAD utterances; a 3.6 MB
- * archive file base64'd through it would be a second bulk-transfer mechanism
- * built on a protocol that was not designed for one. The hub already carries
- * this phone's control plane, already has a route, and answers with a status
- * code -- which is exactly the acknowledgement a delete-after-send needs.
+ * HTTP through the hub, which already carries this phone's control plane,
+ * provides a bounded upload route, and answers with the acknowledgement a
+ * delete-after-send operation needs.
  *
  * Unmetered-only by default, and that is the honest replacement for the
  * drain's `termux-wifi-connectioninfo` gate: continuous ambient audio is
- * ~43 MB/hour, which is archive traffic, not the live signals the speech and
- * event lanes push regardless of network. The chunks wait; they do not
- * expire.
+ * ~43 MB/hour, which is archive traffic rather than event metadata. The
+ * chunks wait; they do not expire.
  */
 class ChunkUploader(context: Context) {
 

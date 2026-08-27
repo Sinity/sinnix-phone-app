@@ -30,10 +30,9 @@ android {
         versionCode = 2
         versionName = "0.2.0"
 
-        // One ABI, because there is one device. onnxruntime ships native
-        // libraries for four architectures and three of them are for phones
-        // this app will never be installed on -- carrying them cost 64 MB of a
-        // 104 MB APK, on a sideloaded build that is copied over adb.
+        // One ABI, because this sideloaded application has one target device.
+        // Keeping the ABI contract explicit also prevents future native
+        // dependencies from silently multiplying the APK size.
         ndk { abiFilters += "arm64-v8a" }
     }
 
@@ -92,9 +91,6 @@ dependencies {
     implementation(libs.androidx.glance.material3)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.okhttp)
-    // Silero VAD, so the phone gates speech with the same engine the desktop
-    // does rather than an energy threshold that would stream every passing car.
-    implementation(libs.onnxruntime.android)
     // Read the band's data directly; the scheduled export never lands.
     implementation(libs.androidx.health.connect)
 }

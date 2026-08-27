@@ -75,8 +75,6 @@ class MainActivity : ComponentActivity() {
         // otherwise resolve to nothing unless the operator happened to have
         // opened the shelf first.
         dev.sinnix.phone.decks.Decks.available(this)
-        if (Prefs.speechLane(this)) dev.sinnix.phone.capture.SpeechService.start(this)
-
         setContent {
             SinnixTheme {
                 Box(Modifier.fillMaxSize().background(Palette.Background)) {

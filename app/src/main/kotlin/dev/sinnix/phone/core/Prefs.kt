@@ -19,8 +19,6 @@ object Prefs {
     private const val KEY_EMA_PER_DAY = "ema_per_day"
     private const val KEY_LISTENER_ACK = "notification_listener_acknowledged"
     private const val KEY_AUTOSTART_ATTESTED_AT = "miui_autostart_attested_at"
-    private const val KEY_SPEECH = "speech_lane_enabled"
-    private const val KEY_RECEIVER = "receiver_host"
     private const val KEY_LOCATION = "location_lane_enabled"
     private const val KEY_HEALTH = "health_lane_enabled"
     private const val KEY_SLEEP_DETECT = "sleep_detect_enabled"
@@ -97,39 +95,6 @@ object Prefs {
 
     fun setAutostartAttestedAt(ctx: Context, ms: Long) =
         prefs(ctx).edit().putLong(KEY_AUTOSTART_ATTESTED_AT, ms).apply()
-
-    /**
-     * The always-on speech lane. On by default, like every other capture here.
-     *
-     * An earlier version of this shipped off-by-default with a comment about
-     * how it "puts what was said on a wire" and so nothing but the operator
-     * should switch it on. That was the wrong posture for this estate and the
-     * operator said so: capture lanes are meant to be on, and to stay on. The
-     * toggle exists because a switch is useful, not because the default should
-     * be silence.
-     *
-     * "On" here means what it means for the recorder: started at boot, revived
-     * by the watchdog, restarted when the app is opened. A lane that quietly
-     * stops after a reboot is not an always-on lane, it is an intermittent one
-     * that nobody has noticed yet.
-     */
-    fun speechLane(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_SPEECH, true)
-
-    fun setSpeechLane(ctx: Context, value: Boolean) =
-        prefs(ctx).edit().putBoolean(KEY_SPEECH, value).apply()
-
-    /**
-     * Where the speech receiver listens.
-     *
-     * Its own setting rather than derived from the hub URL: the hub is HTTP
-     * through Caddy and the receiver is a raw TCP socket on a different port,
-     * so one address standing for both would break the moment either moved.
-     */
-    fun receiverHost(ctx: Context): String =
-        prefs(ctx).getString(KEY_RECEIVER, DEFAULT_RECEIVER) ?: DEFAULT_RECEIVER
-
-    fun setReceiverHost(ctx: Context, value: String) =
-        prefs(ctx).edit().putString(KEY_RECEIVER, value).apply()
 
     /**
      * Every capture lane in this file defaults ON, including these two.
@@ -213,8 +178,7 @@ object Prefs {
      * audio is ~43 MB an hour, and a phone that spends a day on cellular would
      * spend a data plan on files that are in no hurry. Chunks wait on the
      * device until wifi; they do not expire and nothing downstream needs them
-     * within the hour. The live lanes (speech, events) push regardless -- they
-     * are kilobytes and their value is their latency.
+     * within the hour. Event metadata remains small enough to push regardless.
      */
     fun uploadOnMetered(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_UPLOAD_METERED, false)
 
@@ -255,36 +219,10 @@ object Prefs {
             .apply()
 
     /**
-     * The receiver's address, defaulted to prime's tailnet name.
+     * The hub base URLs to try, in order.
      *
-     * Cleartext and unauthenticated, like the hub, because the tailnet is the
-     * boundary — see the network-security config for why that is a considered
-     * position rather than a leftover.
-     */
-    const val DEFAULT_RECEIVER = "sinnix-prime:8940"
-
-    /**
-     * The receiver targets to try, in order.
-     *
-     * The MagicDNS name stopped resolving on this phone on 2026-08-14 --
-     * Tailscale was up, the tailnet route worked, and every stream to the
-     * name silently failed for two days while a connect to the raw tailnet
-     * address succeeded. The name stays first because names survive IP
-     * reassignment; the literal address is the fallback that survives DNS.
-     */
-    fun receiverCandidates(ctx: Context): List<String> {
-        val configured = receiverHost(ctx)
-        val fallback = "100.114.9.64:8940"
-        return if (configured == fallback) listOf(configured)
-        else listOf(configured, fallback)
-    }
-
-    /**
-     * The hub base URLs to try, in order -- the same lesson as
-     * [receiverCandidates], which the hub did not get until 2026-08-17.
-     *
-     * The receiver learned to fall back to the raw tailnet address when
-     * MagicDNS stopped resolving; the hub URL kept a single name, so every
+     * MagicDNS stopped resolving while the raw tailnet address still worked.
+     * Before the fallback, every
      * HTTP call the app made -- glance, steering, jobs, intents, job answers,
      * ops actions -- died on UnknownHostException and fell back to the file
      * plane. Silently, because falling back is what those calls are supposed

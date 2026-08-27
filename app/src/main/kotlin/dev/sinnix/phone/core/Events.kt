@@ -104,7 +104,7 @@ object Events {
      * a 101 MB file became several hundred MB of JSONObjects inside a 256 MB
      * art heap, and the process crash-looped from whichever allocation
      * happened next (observed from both the home screen's offer policy and
-     * the speech lane's 24-byte tensor alloc). Every caller of recent() wants
+     * a capture worker allocation). Every caller of recent() wants
      * the newest slice, so each file contributes at most its final TAIL_BYTES
      * -- an ordinary day is far smaller than the cap and unaffected.
      */

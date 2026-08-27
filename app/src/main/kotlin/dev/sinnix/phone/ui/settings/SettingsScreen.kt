@@ -2,7 +2,6 @@ package dev.sinnix.phone.ui.settings
 
 import android.Manifest
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -30,10 +29,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.health.connect.client.PermissionController
 import androidx.navigation.NavController
-import dev.sinnix.phone.capture.SpeechService
 import dev.sinnix.phone.core.Events
 import dev.sinnix.phone.core.Prefs
 import dev.sinnix.phone.ingress.HealthLane
@@ -57,14 +54,12 @@ import dev.sinnix.phone.ui.theme.Palette
 fun SettingsScreen(nav: NavController) {
     val ctx = LocalContext.current
 
-    var speech by remember { mutableStateOf(Prefs.speechLane(ctx)) }
     var location by remember { mutableStateOf(Prefs.locationLane(ctx)) }
     var health by remember { mutableStateOf(Prefs.healthLane(ctx)) }
     var sleepDetect by remember { mutableStateOf(Prefs.sleepDetect(ctx)) }
     var power by remember { mutableStateOf(Prefs.powerLane(ctx)) }
     var emaPerDay by remember { mutableStateOf(Prefs.emaPerDay(ctx).toFloat()) }
     var hub by remember { mutableStateOf(Prefs.hubBaseUrl(ctx)) }
-    var receiver by remember { mutableStateOf(Prefs.receiverHost(ctx)) }
 
     val askLocation =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -105,23 +100,6 @@ fun SettingsScreen(nav: NavController) {
     ) {
         Card {
             SectionLabel("Lanes")
-
-            LaneRow(
-                "Speech to prime",
-                "Streams what you say — and only what you say — to prime as it is " +
-                    "said, on any network. The heaviest thing here: a second " +
-                    "microphone and an outbound connection whenever you speak.",
-                speech,
-            ) { on ->
-                val mic =
-                    ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) ==
-                        PackageManager.PERMISSION_GRANTED
-                if (on && !mic) return@LaneRow
-                speech = on
-                Prefs.setSpeechLane(ctx, on)
-                if (on) SpeechService.start(ctx) else SpeechService.stop(ctx)
-                Events.record(ctx, "lane_toggle", "lane", "speech", "enabled", on)
-            }
 
             LaneRow(
                 "Location",
@@ -223,19 +201,10 @@ fun SettingsScreen(nav: NavController) {
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("hub base URL") },
             )
-            OutlinedTextField(
-                value = receiver,
-                onValueChange = {
-                    receiver = it
-                    Prefs.setReceiverHost(ctx, it.trim())
-                },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("speech receiver host:port") },
-            )
             Text(
-                "Two addresses because they are two services: the hub is HTTP " +
-                    "through Caddy, the receiver is a raw socket on its own port. " +
-                    "One field standing for both would break whenever either moved.",
+                "Prime derives speech-segment metadata from uploaded ambient chunks. " +
+                    "The phone records one canonical audio stream and does not run " +
+                    "a duplicate microphone or VAD pipeline.",
                 style = MaterialTheme.typography.labelSmall,
                 color = Palette.TextFaint,
             )

@@ -240,18 +240,6 @@
         android:stopWithTask="false" />
 
     <!--
-      The speech lane. A second microphone-typed service rather than a mode of
-      the first: they answer different questions at different rates (archive
-      grade against recogniser grade) and one of them is off by default, which
-      a shared service would have made awkward to express.
-    -->
-    <service
-        android:name=".capture.SpeechService"
-        android:exported="false"
-        android:foregroundServiceType="microphone"
-        android:stopWithTask="false" />
-
-    <!--
       Capture before first unlock. directBootAware is the whole point: this is
       the only component that exists at all between power-on and the operator
       typing their PIN, which is the window every reboot used to lose.

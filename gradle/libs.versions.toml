@@ -8,7 +8,6 @@ composeBom = "2025.06.01"
 navigationCompose = "2.9.0"
 okhttp = "4.12.0"
 glance = "1.1.1"
-onnxruntime = "1.20.0"
 # 1.1.0 is the GA release; 1.1.0-alpha07 was a mid-development snapshot that
 # happened to be pinned here and never revisited. There is no 1.0.x stable at
 # all -- the published line runs 1.0.0-alpha04..11, then 1.1.0-alpha01 onward to
@@ -39,7 +38,6 @@ androidx-glance-appwidget = { group = "androidx.glance", name = "glance-appwidge
 androidx-glance-material3 = { group = "androidx.glance", name = "glance-material3", version.ref = "glance" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
-onnxruntime-android = { group = "com.microsoft.onnxruntime", name = "onnxruntime-android", version.ref = "onnxruntime" }
 androidx-health-connect = { group = "androidx.health.connect", name = "connect-client", version.ref = "healthConnect" }
 
 [plugins]

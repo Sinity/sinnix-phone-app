@@ -24,22 +24,9 @@
   writeShellApplication,
   android-tools,
   gradle,
-  fetchurl,
 }:
 
 let
-  # Silero VAD, shipped as an app asset.
-  #
-  # Fetched here rather than committed: 2 MB of weights is not source, and a
-  # binary in a public repo is a thing that has to be explained forever. But it
-  # must be IN the APK rather than downloaded on the device, because the speech
-  # lane deliberately has no network gate — a model that needed one download
-  # first would have made "always on" mean "always on once you have been home".
-  sileroVad = fetchurl {
-    url = "https://github.com/snakers4/silero-vad/raw/76e3dc408eb2a5c655c34e230d2d5459b4439daa/src/silero_vad/data/silero_vad.onnx";
-    hash = "sha256-GhU6IvRQnikqlOZ9b5uF6N6yW0mIaCt+F0xlJ52HiOM=";
-  };
-
   # The Android SDK is unfree and license-gated, so it needs its own nixpkgs
   # instantiation rather than the repo's shared one. pkgs.path keeps that
   # pinned to exactly the same nixpkgs revision the rest of the flake uses.
@@ -86,6 +73,7 @@ let
         !(builtins.elem base [
           "pkg.nix"
           "deps.json"
+          ".agent"
           ".gradle"
           "build"
         ]);
@@ -120,9 +108,6 @@ let
       export ANDROID_USER_HOME="$HOME/.android"
       mkdir -p "$ANDROID_USER_HOME"
 
-      # The VAD model, into the asset tree the app reads it from.
-      mkdir -p app/src/main/assets
-      cp ${sileroVad} app/src/main/assets/silero_vad.onnx
     '';
 
     gradleFlags = [
