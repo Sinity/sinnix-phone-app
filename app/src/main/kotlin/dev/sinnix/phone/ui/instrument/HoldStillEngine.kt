@@ -89,7 +89,14 @@ fun HoldStillEngine(instrument: Instrument, onDone: (Outcome) -> Unit) {
         }
         collector.stop()
         if (failure != null) {
-            RunRecord.write(ctx, instrument, startedAt, mapOf("failed" to failure))
+            RunRecord.write(
+                ctx,
+                instrument,
+                startedAt,
+                mapOf("failed" to failure),
+                primaryMetric = "",
+                primaryValue = null,
+            )
             onDone(Outcome("", null, "", true, emptyMap(), failure ?: "failed"))
             return@LaunchedEffect
         }
@@ -104,6 +111,8 @@ fun HoldStillEngine(instrument: Instrument, onDone: (Outcome) -> Unit) {
                 "trace_file" to (blob?.name ?: JSONObject.NULL),
                 "duration_ms" to durationMs,
             ),
+            primaryMetric = "",
+            primaryValue = null,
         )
         onDone(
             Outcome(

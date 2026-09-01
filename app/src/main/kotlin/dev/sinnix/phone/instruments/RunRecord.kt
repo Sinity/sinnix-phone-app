@@ -33,6 +33,8 @@ object RunRecord {
         startedAtMs: Long,
         fields: Map<String, Any?>,
         preflightUnmet: List<String> = emptyList(),
+        primaryMetric: String = "",
+        primaryValue: Double? = null,
     ) {
         val epoch = Epoch.current(ctx)
         val o = JSONObject()
@@ -55,6 +57,8 @@ object RunRecord {
         if (preflightUnmet.isNotEmpty()) {
             o.put("preflight_unmet", JSONArray(preflightUnmet))
         }
+        o.put("primary_metric", primaryMetric)
+        o.put("primary_value", primaryValue ?: JSONObject.NULL)
         fields.forEach { (k, v) ->
             o.put(
                 k,

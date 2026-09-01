@@ -65,6 +65,18 @@ fun CountingEngine(instrument: Instrument, onDone: (Outcome) -> Unit) {
     fun finish() {
         if (done) return
         done = true
+        val total = cyclesCorrect + unawareMiscounts
+        val accuracy = if (total == 0) null else cyclesCorrect.toDouble() / total
+        val outcome = Outcome(
+            primaryLabel = "cycles_correct",
+            primary = accuracy?.times(100),
+            primaryUnit = "% cycles held",
+            lowerIsBetter = false,
+            fields = emptyMap(),
+            note =
+                "$unawareMiscounts unnoticed · $selfCaughtResets caught yourself" +
+                    " — these are kept apart on purpose",
+        )
         RunRecord.write(
             ctx,
             instrument,
@@ -75,21 +87,10 @@ fun CountingEngine(instrument: Instrument, onDone: (Outcome) -> Unit) {
                 "self_caught_resets" to selfCaughtResets,
                 "cycle_length" to cycle,
             ),
+            primaryMetric = outcome.primaryLabel,
+            primaryValue = outcome.primary,
         )
-        val total = cyclesCorrect + unawareMiscounts
-        val accuracy = if (total == 0) null else cyclesCorrect.toDouble() / total
-        onDone(
-            Outcome(
-                primaryLabel = "cycles_correct",
-                primary = accuracy?.times(100),
-                primaryUnit = "% cycles held",
-                lowerIsBetter = false,
-                fields = emptyMap(),
-                note =
-                    "$unawareMiscounts unnoticed · $selfCaughtResets caught yourself" +
-                        " — these are kept apart on purpose",
-            )
-        )
+        onDone(outcome)
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -195,6 +196,8 @@ private fun SchandryCounting(instrument: Instrument, onDone: (Outcome) -> Unit) 
                     "window_ms" to windows,
                     "scored_by" to "prime",
                 ),
+                primaryMetric = "",
+                primaryValue = null,
             )
             onDone(
                 Outcome(
