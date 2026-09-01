@@ -29,6 +29,7 @@ import dev.sinnix.phone.instruments.Catalogue
 import dev.sinnix.phone.instruments.Engine
 import dev.sinnix.phone.instruments.Instrument
 import dev.sinnix.phone.instruments.OfferPolicy
+import dev.sinnix.phone.instruments.Outcome
 import dev.sinnix.phone.instruments.RunRecord
 import dev.sinnix.phone.ui.Card
 import dev.sinnix.phone.ui.SectionLabel
@@ -117,16 +118,6 @@ private sealed interface Stage {
 
     data class Result(val index: Int, val outcome: Outcome) : Stage
 }
-
-/** What an engine hands back. [primary] is the one number the result screen shows. */
-data class Outcome(
-    val primaryLabel: String,
-    val primary: Double?,
-    val primaryUnit: String,
-    val lowerIsBetter: Boolean,
-    val fields: Map<String, Any?>,
-    val note: String = "",
-)
 
 @Composable
 private fun RunnerFlow(queue: List<Instrument>, onFinished: () -> Unit) {

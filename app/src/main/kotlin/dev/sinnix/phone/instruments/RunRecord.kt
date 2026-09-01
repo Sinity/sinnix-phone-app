@@ -24,6 +24,11 @@ import org.json.JSONObject
  * are suspended rather than adjusted — a firmware change moves the input path,
  * and a correction factor invented after the fact would be worse than an
  * honest gap in the series.
+ *
+ * The [Outcome] is required rather than optional: which of a run's numbers is
+ * the headline is a decision the engine already made for the result screen,
+ * and a record that leaves it out forces every reader to re-derive it from the
+ * engine name.
  */
 object RunRecord {
 
@@ -32,6 +37,7 @@ object RunRecord {
         instrument: Instrument,
         startedAtMs: Long,
         fields: Map<String, Any?>,
+        outcome: Outcome,
         preflightUnmet: List<String> = emptyList(),
     ) {
         val epoch = Epoch.current(ctx)
@@ -55,6 +61,8 @@ object RunRecord {
         if (preflightUnmet.isNotEmpty()) {
             o.put("preflight_unmet", JSONArray(preflightUnmet))
         }
+        o.put("primary_metric", outcome.primaryLabel)
+        o.put("primary_value", outcome.primary ?: JSONObject.NULL)
         fields.forEach { (k, v) ->
             o.put(
                 k,

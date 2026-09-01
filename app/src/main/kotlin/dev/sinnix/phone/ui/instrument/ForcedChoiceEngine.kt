@@ -27,6 +27,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import dev.sinnix.phone.core.Epoch
 import dev.sinnix.phone.instruments.Instrument
+import dev.sinnix.phone.instruments.Outcome
 import dev.sinnix.phone.instruments.RunRecord
 import dev.sinnix.phone.ui.ProgressArc
 import dev.sinnix.phone.ui.theme.Palette
@@ -90,6 +91,16 @@ fun ForcedChoiceEngine(instrument: Instrument, onDone: (Outcome) -> Unit) {
                 if (congruentRt.isNotEmpty() && incongruentRt.isNotEmpty()) {
                     incongruentRt.average() - congruentRt.average()
                 } else null
+            val outcome = Outcome(
+                primaryLabel = if (interference != null) "interference_ms" else "median_correct_rt_ms",
+                primary = interference ?: medianCorrect,
+                primaryUnit = "ms",
+                lowerIsBetter = true,
+                fields = emptyMap(),
+                note =
+                    "$correctCount/${trials.size} correct" +
+                        if (interference != null) " · incongruent minus congruent" else "",
+            )
             RunRecord.write(
                 ctx,
                 instrument,
@@ -102,19 +113,9 @@ fun ForcedChoiceEngine(instrument: Instrument, onDone: (Outcome) -> Unit) {
                     "interference_ms" to interference,
                     "discarded" to discarded,
                 ),
+                outcome = outcome,
             )
-            onDone(
-                Outcome(
-                    primaryLabel = if (interference != null) "interference_ms" else "median_correct_rt_ms",
-                    primary = interference ?: medianCorrect,
-                    primaryUnit = "ms",
-                    lowerIsBetter = true,
-                    fields = emptyMap(),
-                    note =
-                        "$correctCount/${trials.size} correct" +
-                            if (interference != null) " · incongruent minus congruent" else "",
-                )
-            )
+            onDone(outcome)
             return@LaunchedEffect
         }
         visible = false

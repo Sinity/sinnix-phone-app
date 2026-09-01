@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import dev.sinnix.phone.instruments.Instrument
+import dev.sinnix.phone.instruments.Outcome
 import dev.sinnix.phone.instruments.RunRecord
 import dev.sinnix.phone.ui.ProgressArc
 import dev.sinnix.phone.ui.theme.Palette
@@ -92,6 +93,14 @@ fun StaircaseEngine(instrument: Instrument, onDone: (Outcome) -> Unit) {
             // describe the ladder, not the ear.
             val used = reversals.drop(2).ifEmpty { reversals }
             val threshold = used.average()
+            val outcome = Outcome(
+                primaryLabel = "threshold",
+                primary = threshold,
+                primaryUnit = if (gapMode) "ms gap" else "Hz",
+                lowerIsBetter = true,
+                fields = emptyMap(),
+                note = "${reversals.size} reversals over $trials trials",
+            )
             RunRecord.write(
                 ctx,
                 instrument,
@@ -103,17 +112,9 @@ fun StaircaseEngine(instrument: Instrument, onDone: (Outcome) -> Unit) {
                     "trials" to trials,
                     "base_hz" to baseHz,
                 ),
+                outcome = outcome,
             )
-            onDone(
-                Outcome(
-                    primaryLabel = "threshold",
-                    primary = threshold,
-                    primaryUnit = if (gapMode) "ms gap" else "Hz",
-                    lowerIsBetter = true,
-                    fields = emptyMap(),
-                    note = "${reversals.size} reversals over $trials trials",
-                )
-            )
+            onDone(outcome)
             return@LaunchedEffect
         }
         delay(500)
@@ -307,15 +308,15 @@ private fun TorchCffEngine(instrument: Instrument, onDone: (Outcome) -> Unit) {
                 .get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
         }
         if (cm == null || id == null) {
+            val outcome = Outcome("feasibility", null, "", true, emptyMap(), "no torch — instrument not viable")
             RunRecord.write(
                 ctx,
                 instrument,
                 startedAt,
                 mapOf("feasible" to false, "reason" to "no torch on this device"),
+                outcome = outcome,
             )
-            onDone(
-                Outcome("feasibility", null, "", true, emptyMap(), "no torch — instrument not viable")
-            )
+            onDone(outcome)
             return@LaunchedEffect
         }
         // Measure the switch cost before trusting it with a threshold.
@@ -338,6 +339,19 @@ private fun TorchCffEngine(instrument: Instrument, onDone: (Outcome) -> Unit) {
         // switch has to cost well under half a period at the top of the range.
         val achievable = if (switchMs <= 0) 0.0 else 1000.0 / (2 * switchMs)
         feasibleHz = achievable
+        val outcome = Outcome(
+            primaryLabel = "achievable_hz",
+            primary = achievable,
+            primaryUnit = "Hz ceiling",
+            lowerIsBetter = false,
+            fields = emptyMap(),
+            note =
+                "%.2f ms per switch — %s".format(
+                    switchMs,
+                    if (achievable >= 70.0) "a staircase is viable here"
+                    else "below foveal CFF; the threshold would measure the binder, not the eye",
+                ),
+        )
         RunRecord.write(
             ctx,
             instrument,
@@ -349,22 +363,9 @@ private fun TorchCffEngine(instrument: Instrument, onDone: (Outcome) -> Unit) {
                 "reason" to if (achievable >= 70.0) "torch switching is fast enough" else
                     "torch switching caps the stimulus below foveal CFF",
             ),
+            outcome = outcome,
         )
-        onDone(
-            Outcome(
-                primaryLabel = "achievable_hz",
-                primary = achievable,
-                primaryUnit = "Hz ceiling",
-                lowerIsBetter = false,
-                fields = emptyMap(),
-                note =
-                    "%.2f ms per switch — %s".format(
-                        switchMs,
-                        if (achievable >= 70.0) "a staircase is viable here"
-                        else "below foveal CFF; the threshold would measure the binder, not the eye",
-                    ),
-            )
-        )
+        onDone(outcome)
     }
 
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

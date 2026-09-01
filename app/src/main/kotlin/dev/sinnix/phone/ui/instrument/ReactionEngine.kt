@@ -27,6 +27,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import dev.sinnix.phone.core.Epoch
 import dev.sinnix.phone.instruments.Instrument
+import dev.sinnix.phone.instruments.Outcome
 import dev.sinnix.phone.instruments.RunRecord
 import dev.sinnix.phone.ui.ProgressArc
 import dev.sinnix.phone.ui.theme.Palette
@@ -116,6 +117,14 @@ fun ReactionEngine(instrument: Instrument, onDone: (Outcome) -> Unit) {
                     val m = xs.average()
                     kotlin.math.sqrt(xs.sumOf { (it - m) * (it - m) } / (xs.size - 1.0))
                 }
+            val outcome = Outcome(
+                primaryLabel = "interval_sd_ms",
+                primary = sd,
+                primaryUnit = "ms SD",
+                lowerIsBetter = true,
+                fields = emptyMap(),
+                note = "${tapIntervals.size + 1} taps · variability moves before rate does",
+            )
             RunRecord.write(
                 ctx,
                 instrument,
@@ -127,17 +136,9 @@ fun ReactionEngine(instrument: Instrument, onDone: (Outcome) -> Unit) {
                     "interval_sd_ms" to sd,
                     "interruptions" to interruptions,
                 ),
+                outcome = outcome,
             )
-            onDone(
-                Outcome(
-                    primaryLabel = "interval_sd_ms",
-                    primary = sd,
-                    primaryUnit = "ms SD",
-                    lowerIsBetter = true,
-                    fields = emptyMap(),
-                    note = "${tapIntervals.size + 1} taps · variability moves before rate does",
-                )
-            )
+            onDone(outcome)
         }
     } else {
         LaunchedEffect(trial, discardTrial, paused) {
@@ -149,6 +150,17 @@ fun ReactionEngine(instrument: Instrument, onDone: (Outcome) -> Unit) {
             }
             if (trial >= trials) {
                 val median = rts.sorted().let { if (it.isEmpty()) null else it[it.size / 2].toDouble() }
+                val outcome = Outcome(
+                    primaryLabel = "median_rt_ms",
+                    primary = median,
+                    primaryUnit = "ms",
+                    lowerIsBetter = true,
+                    fields = emptyMap(),
+                    note =
+                        "${rts.size} valid · ${rts.count { it >= LAPSE_MS }} lapses" +
+                            if (!epoch.isCalibrated) " · touch latency uncalibrated (${epoch.id})"
+                            else " · ${epoch.id}",
+                )
                 RunRecord.write(
                     ctx,
                     instrument,
@@ -167,20 +179,9 @@ fun ReactionEngine(instrument: Instrument, onDone: (Outcome) -> Unit) {
                         "touch_offset_applied_ms" to
                             if (epoch.isCalibrated) epoch.touchOffsetMs else null,
                     ),
+                    outcome = outcome,
                 )
-                onDone(
-                    Outcome(
-                        primaryLabel = "median_rt_ms",
-                        primary = median,
-                        primaryUnit = "ms",
-                        lowerIsBetter = true,
-                        fields = emptyMap(),
-                        note =
-                            "${rts.size} valid · ${rts.count { it >= LAPSE_MS }} lapses" +
-                                if (!epoch.isCalibrated) " · touch latency uncalibrated (${epoch.id})"
-                                else " · ${epoch.id}",
-                    )
-                )
+                onDone(outcome)
                 return@LaunchedEffect
             }
 

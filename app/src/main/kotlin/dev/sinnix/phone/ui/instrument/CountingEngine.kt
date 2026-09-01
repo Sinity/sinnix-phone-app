@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import dev.sinnix.phone.instruments.Instrument
+import dev.sinnix.phone.instruments.Outcome
 import dev.sinnix.phone.instruments.RunRecord
 import dev.sinnix.phone.ui.HoldRing
 import dev.sinnix.phone.ui.VerbButton
@@ -65,6 +66,18 @@ fun CountingEngine(instrument: Instrument, onDone: (Outcome) -> Unit) {
     fun finish() {
         if (done) return
         done = true
+        val total = cyclesCorrect + unawareMiscounts
+        val accuracy = if (total == 0) null else cyclesCorrect.toDouble() / total
+        val outcome = Outcome(
+            primaryLabel = "cycles_correct",
+            primary = accuracy?.times(100),
+            primaryUnit = "% cycles held",
+            lowerIsBetter = false,
+            fields = emptyMap(),
+            note =
+                "$unawareMiscounts unnoticed · $selfCaughtResets caught yourself" +
+                    " — these are kept apart on purpose",
+        )
         RunRecord.write(
             ctx,
             instrument,
@@ -75,21 +88,9 @@ fun CountingEngine(instrument: Instrument, onDone: (Outcome) -> Unit) {
                 "self_caught_resets" to selfCaughtResets,
                 "cycle_length" to cycle,
             ),
+            outcome = outcome,
         )
-        val total = cyclesCorrect + unawareMiscounts
-        val accuracy = if (total == 0) null else cyclesCorrect.toDouble() / total
-        onDone(
-            Outcome(
-                primaryLabel = "cycles_correct",
-                primary = accuracy?.times(100),
-                primaryUnit = "% cycles held",
-                lowerIsBetter = false,
-                fields = emptyMap(),
-                note =
-                    "$unawareMiscounts unnoticed · $selfCaughtResets caught yourself" +
-                        " — these are kept apart on purpose",
-            )
-        )
+        onDone(outcome)
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -186,6 +187,15 @@ private fun SchandryCounting(instrument: Instrument, onDone: (Outcome) -> Unit) 
         count = 0
         progress = 0f
         if (windowIndex + 1 >= windows.size) {
+            val outcome =
+                Outcome(
+                    primaryLabel = "",
+                    primary = null,
+                    primaryUnit = "",
+                    lowerIsBetter = false,
+                    fields = emptyMap(),
+                    note = "counted ${counts.joinToString(", ")} — accuracy comes back as a receipt",
+                )
             RunRecord.write(
                 ctx,
                 instrument,
@@ -195,17 +205,9 @@ private fun SchandryCounting(instrument: Instrument, onDone: (Outcome) -> Unit) 
                     "window_ms" to windows,
                     "scored_by" to "prime",
                 ),
+                outcome = outcome,
             )
-            onDone(
-                Outcome(
-                    primaryLabel = "",
-                    primary = null,
-                    primaryUnit = "",
-                    lowerIsBetter = false,
-                    fields = emptyMap(),
-                    note = "counted ${counts.joinToString(", ")} — accuracy comes back as a receipt",
-                )
-            )
+            onDone(outcome)
         } else {
             windowIndex++
         }
