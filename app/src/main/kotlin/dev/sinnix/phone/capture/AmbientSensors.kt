@@ -24,9 +24,10 @@ import kotlin.math.sqrt
  * phone on a desk or in a pocket" is the covariate that makes a lux reading
  * interpretable.
  *
- * Reduced on the phone, scored on prime. Raw sensor streams are tens of samples
- * a second of very little information; what leaves here is one line a minute
- * carrying the statistics that survive aggregation.
+ * The raw stream is the record. Minute aggregates remain as a cheap derived
+ * sidecar for screens and reducers, but they must never be the only copy of a
+ * sensor callback: motion and light are useful precisely when a later
+ * question does not match today's reduction.
  *
  * Attached to the capture service rather than run on its own schedule: that
  * process is already alive continuously with a wakelock held, so this adds a
@@ -40,6 +41,7 @@ class AmbientSensors(context: Context) : SensorEventListener {
     private val accelerometer: Sensor? = sensors?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
 
     private val handler = Handler(Looper.getMainLooper())
+    private val raw = SensorChunkWriter(ctx)
     private var listening = false
     private var windowStartedAtMs = 0L
 
@@ -55,42 +57,49 @@ class AmbientSensors(context: Context) : SensorEventListener {
     fun start() {
         if (sensors == null) return
         Log.i(Storage.TAG, "sensors: light=${light != null} accelerometer=${accelerometer != null}")
+        raw.start()
         openWindow()
     }
 
     fun stop() {
         handler.removeCallbacksAndMessages(null)
-        closeWindow()
+        if (listening) {
+            sensors?.unregisterListener(this)
+            listening = false
+            flush(System.currentTimeMillis())
+        }
+        raw.stop()
     }
 
-    /** Listen for a slice, then sleep until the next minute. */
+    /** Register once and flush derived aggregates on a minute cadence. */
     private fun openWindow() {
         val sm = sensors ?: return
+        if (listening) return
         windowStartedAtMs = System.currentTimeMillis()
         light?.let { sm.registerListener(this, it, SAMPLING_PERIOD_US) }
         accelerometer?.let { sm.registerListener(this, it, SAMPLING_PERIOD_US) }
         listening = true
-        handler.postDelayed(::closeWindow, SAMPLE_WINDOW_MILLIS)
+        handler.postDelayed(::flushWindow, SAMPLE_WINDOW_MILLIS)
     }
 
-    private fun closeWindow() {
+    private fun flushWindow() {
         if (!listening) return
-        sensors?.unregisterListener(this)
-        listening = false
         flush(System.currentTimeMillis())
-        handler.postDelayed(::openWindow, (WINDOW_MILLIS - SAMPLE_WINDOW_MILLIS).coerceAtLeast(1L))
+        handler.postDelayed(::flushWindow, WINDOW_MILLIS)
     }
 
     override fun onSensorChanged(event: SensorEvent) {
         when (event.sensor.type) {
             Sensor.TYPE_LIGHT -> {
                 val lux = event.values[0]
+                raw.light(event.timestamp, lux)
                 luxSamples++
                 luxSum += lux
                 if (luxMax < 0 || lux > luxMax) luxMax = lux
                 if (luxMin < 0 || lux < luxMin) luxMin = lux
             }
             Sensor.TYPE_ACCELEROMETER -> {
+                raw.accelerometer(event.timestamp, event.values[0], event.values[1], event.values[2])
                 // Magnitude minus gravity: what remains is movement,
                 // independent of how the phone happens to be lying. Squared
                 // here and rooted at flush so the statistic is an RMS rather
@@ -175,27 +184,14 @@ class AmbientSensors(context: Context) : SensorEventListener {
          */
         @Volatile var latest: Reading? = null
 
-        /** One record a minute: fine enough for circadian work, coarse enough to ignore. */
+        /** Aggregates are emitted once a minute as derived sidecars. */
         private const val WINDOW_MILLIS = 60_000L
 
-        /**
-         * How much of each minute the sensors are actually listened to.
-         *
-         * Duty-cycled rather than rate-limited because neither lever the API
-         * offers works on this device: the sampling period is only a hint and
-         * this platform answers every request with 50 Hz, and the BMI220
-         * reports no batching FIFO, so a report-latency window changes nothing.
-         * Measured: 3000 accelerometer callbacks a minute either way.
-         *
-         * Ten seconds is plenty to characterise a minute of stillness or
-         * motion, and it cuts the callbacks by six. What is lost is a movement
-         * that both starts and ends inside the unsampled fifty seconds; what is
-         * gained is a lane that can run all day.
-         */
-        private const val SAMPLE_WINDOW_MILLIS = 10_000L
+        /** Aggregation windows do not control raw listener lifetime. */
+        private const val SAMPLE_WINDOW_MILLIS = 60_000L
 
-        /** Only a hint on this platform, kept because it costs nothing where it is honoured. */
-        private const val SAMPLING_PERIOD_US = 200_000
+        /** Highest stable rate requested; the device may deliver a different rate. */
+        private const val SAMPLING_PERIOD_US = 20_000
 
         /** Two decimals: lux and m/s² are not meaningful past that, and humans read the log too. */
         private fun round(v: Double): Double = (v * 100.0).roundToLong() / 100.0

@@ -170,6 +170,7 @@ class AmbientService : Service() {
         inbox?.stop()
         heartRate?.stop()
         location?.stop()
+        usage?.stop()
         thread.quitSafely()
         wakeLock?.takeIf { it.isHeld }?.release()
         liveStatus = null
