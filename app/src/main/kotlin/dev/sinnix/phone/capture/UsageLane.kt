@@ -2,7 +2,10 @@ package dev.sinnix.phone.capture
 
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import dev.sinnix.phone.core.Events
 import dev.sinnix.phone.core.Prefs
 import dev.sinnix.phone.core.Stamps
@@ -38,6 +41,25 @@ class UsageLane(context: Context) {
     private val busy = java.util.concurrent.atomic.AtomicBoolean(false)
     private var ticksUntilRun = 0
     private var reportedBlocked = false
+
+    private val userPresent = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_USER_PRESENT) Events.record(ctx, "user_present")
+        }
+    }
+
+    init {
+        ctx.registerReceiver(userPresent, IntentFilter(Intent.ACTION_USER_PRESENT))
+    }
+
+    fun stop() {
+        try {
+            ctx.unregisterReceiver(userPresent)
+        } catch (_: IllegalArgumentException) {
+            // Already unregistered during process teardown.
+        }
+        worker.shutdownNow()
+    }
 
     fun tick() {
         if (!busy.compareAndSet(false, true)) return
@@ -85,8 +107,7 @@ class UsageLane(context: Context) {
             val kind = eventName(ev.eventType) ?: continue
             Events.record(
                 ctx,
-                "usage",
-                "event", kind,
+                kind,
                 "package", ev.packageName,
                 "class", ev.className,
                 "time", Stamps.iso(ev.timeStamp),
@@ -116,8 +137,8 @@ class UsageLane(context: Context) {
             UsageEvents.Event.ACTIVITY_RESUMED -> "activity_resumed"
             UsageEvents.Event.ACTIVITY_PAUSED -> "activity_paused"
             UsageEvents.Event.ACTIVITY_STOPPED -> "activity_stopped"
-            UsageEvents.Event.SCREEN_INTERACTIVE -> "screen_interactive"
-            UsageEvents.Event.SCREEN_NON_INTERACTIVE -> "screen_non_interactive"
+            UsageEvents.Event.SCREEN_INTERACTIVE -> "screen_on"
+            UsageEvents.Event.SCREEN_NON_INTERACTIVE -> "screen_off"
             UsageEvents.Event.KEYGUARD_SHOWN -> "keyguard_shown"
             UsageEvents.Event.KEYGUARD_HIDDEN -> "keyguard_hidden"
             UsageEvents.Event.FOREGROUND_SERVICE_START -> "foreground_service_start"
