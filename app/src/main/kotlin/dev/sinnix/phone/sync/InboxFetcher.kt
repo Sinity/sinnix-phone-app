@@ -42,6 +42,8 @@ class InboxFetcher(context: Context) {
 
     private val hub = HubBulk(ctx)
 
+    private val store = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
     /**
      * Fetch if it is time, or [force] when the operator has just opened the app
      * and a thirty-second-old glance is worse than a moment's wait.
@@ -67,32 +69,54 @@ class InboxFetcher(context: Context) {
         val listing = hub.getJson("${HubBulk.PHONE}/inbox") ?: return note("unreachable")
         val files = listing.optJSONArray("files") ?: return note("prime sent no listing")
 
+        val acknowledged = acknowledged()
+        val offered = HashSet<String>()
         var landed = 0
+        var failure: String? = null
+        var listingExhausted = true
+
         for (i in 0 until files.length()) {
             val entry = files.optJSONObject(i) ?: continue
             val name = entry.optString("name")
             if (name.isEmpty()) continue
             val sha = entry.optString("sha256")
+            val key = "$sha $name"
+            offered.add(key)
             val target = File(root, name)
             if (target.isFile && HubBulk.sha256(target.readBytes()).equals(sha, true)) {
-                // Already here, byte for byte. Still confirmed: a one-shot
-                // whose acknowledgement was lost must not sit on prime
-                // forever, and confirming something prime has already
-                // forgotten is a no-op it answers ok.
-                confirm(name, sha)
+                // Already here, byte for byte. Confirm it once and only once:
+                // a one-shot whose acknowledgement was lost must not sit on
+                // prime forever, but a deck prime keeps is offered on every
+                // pass, and asking it to forget the same bytes every minute
+                // is a request per minute for the life of the deck.
+                if (key !in acknowledged && confirm(name, sha)) acknowledged.add(key)
                 continue
             }
             val encoded = URLEncoder.encode(name, "UTF-8")
             val body = hub.getBytes("${HubBulk.PHONE}/inbox/file?name=$encoded")
-                ?: return note("could not fetch $name")
+            if (body == null) {
+                failure = "could not fetch $name"
+                listingExhausted = false
+                break
+            }
             target.parentFile?.mkdirs()
             // The same atomic write every durable record here gets: the
             // FileObserver fires on the rename, so a watcher never sees a
             // half-written receipt.
-            if (!Storage.writeAtomically(target, body)) return note("could not write $name")
+            if (!Storage.writeAtomically(target, body)) {
+                failure = "could not write $name"
+                listingExhausted = false
+                break
+            }
             landed++
-            confirm(name, sha)
+            if (confirm(name, sha)) acknowledged.add(key)
         }
+
+        // Only a listing read to its end says what prime no longer holds.
+        // Forgetting an acknowledgement prime still has would re-confirm it.
+        if (listingExhausted) acknowledged.retainAll(offered)
+        rememberAcknowledged(acknowledged)
+
         if (landed > 0) {
             Events.record(ctx, "inbox_fetched", "files", landed)
             // Receipts and notifications that just landed become notifications
@@ -100,12 +124,30 @@ class InboxFetcher(context: Context) {
             // only runs while the capture service is up.
             Inbox.drainNotifications(ctx)
         }
-        note(null)
+        note(failure)
     }
 
-    private fun confirm(name: String, sha: String) {
+    /**
+     * Entries prime has answered "ok" to, as `"<sha256> <name>"`.
+     *
+     * Persisted, because the fetcher is constructed fresh on every watchdog
+     * sweep: an in-memory set would forget on the next alarm and confirm
+     * everything again. Only an acknowledged confirmation is remembered --
+     * an unreachable or refusing prime leaves the entry to be confirmed on a
+     * later pass, which is the recovery this whole route exists for.
+     */
+    private fun acknowledged(): MutableSet<String> =
+        HashSet(store.getStringSet(KEY_ACKNOWLEDGED, emptySet()) ?: emptySet())
+
+    private fun rememberAcknowledged(keys: Set<String>) =
+        store.edit().putStringSet(KEY_ACKNOWLEDGED, keys).apply()
+
+    /** True when prime answered the confirmation, not merely that it was sent. */
+    private fun confirm(name: String, sha: String): Boolean {
         val encoded = URLEncoder.encode(name, "UTF-8")
-        hub.post("${HubBulk.PHONE}/inbox/confirm?name=$encoded&sha256=$sha", ByteArray(0), sha)
+        val reply =
+            hub.post("${HubBulk.PHONE}/inbox/confirm?name=$encoded&sha256=$sha", ByteArray(0), sha)
+        return reply is HubBulk.Reply.Ok
     }
 
     private fun note(reason: String?) {
@@ -127,5 +169,9 @@ class InboxFetcher(context: Context) {
          * is not worth paying three times a minute on a phone in a pocket.
          */
         private const val INTERVAL_MS = 60_000L
+
+        private const val PREFS = "inbox-fetch"
+
+        private const val KEY_ACKNOWLEDGED = "confirmed"
     }
 }
