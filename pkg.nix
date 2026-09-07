@@ -132,7 +132,15 @@ let
     enableParallelBuilding = false;
     enableParallelUpdating = false;
 
-    doCheck = false;
+    doCheck = true;
+    checkPhase = ''
+      runHook preCheck
+      mkdir -p integrity-test
+      javac -d integrity-test app/src/main/java/dev/sinnix/phone/capture/*.java tools/*Test.java
+      java -cp integrity-test CaptureIntegrityTest
+      java -cp integrity-test VerifiedChunkCopyTest
+      runHook postCheck
+    '';
 
     installPhase = ''
       runHook preInstall

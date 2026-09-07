@@ -5,12 +5,16 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
+import android.media.AudioRecordingConfiguration
+import android.media.MediaMetadataRetriever
 import android.media.MediaRecorder
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import dev.sinnix.phone.R
 import dev.sinnix.phone.core.Events
@@ -28,8 +32,10 @@ import java.io.File
  * single [MediaRecorder] at a time and rotates it on a fixed wall-clock
  * cadence, producing one chunk file per period.
  *
- * Files are written as `ambient-<UTC>.m4a.part` and renamed to `.m4a` only
- * once the muxer has closed them. The desktop drain rsyncs this directory with
+ * Files are recorded into private storage as `ambient-<UTC>.m4a.part`.
+ * After the muxer closes, encoded duration is verified and [ChunkPublisher]
+ * publishes a checked copy in shared storage without blocking the encoder.
+ * The desktop drain rsyncs the shared directory with
  * `--remove-source-files`, so an in-progress file under its final name would
  * eventually be deleted out from under the open descriptor and lose the
  * trailing moov atom. The suffix, plus an rsync exclude on the desktop side,
@@ -49,6 +55,9 @@ class AmbientService : Service() {
     private var recorder: MediaRecorder? = null
     private var currentPart: File? = null
     private var chunkStartedAtMs = 0L
+    private var chunkStartedElapsedMs = 0L
+    private var recordingSilenced = false
+    private var recordingCallback: AudioManager.AudioRecordingCallback? = null
     private var samplingRate = SAMPLING_RATE_LADDER[0]
 
     private val status = Status()
@@ -67,6 +76,7 @@ class AmbientService : Service() {
     private var inboxFetcher: dev.sinnix.phone.sync.InboxFetcher? = null
     private var mediaMirror: dev.sinnix.phone.sync.MediaMirror? = null
     private var chunkUploader: ChunkUploader? = null
+    private var chunkPublisher: ChunkPublisher? = null
     private var location: dev.sinnix.phone.ingress.LocationLane? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -98,6 +108,7 @@ class AmbientService : Service() {
         outboxUploader = dev.sinnix.phone.sync.OutboxUploader(this)
         inboxFetcher = dev.sinnix.phone.sync.InboxFetcher(this)
         mediaMirror = dev.sinnix.phone.sync.MediaMirror(this)
+        chunkPublisher = ChunkPublisher(this)
         chunkUploader = ChunkUploader(this)
         location = dev.sinnix.phone.ingress.LocationLane(this).also { it.start() }
         // The capture preference lives in credential-protected storage, which
@@ -122,16 +133,9 @@ class AmbientService : Service() {
      * not this service's call to make.
      */
     private fun sweepOrphans() {
-        val dir = Storage.chunkDir(this) ?: return
-        val parts = dir.listFiles { _, name -> name.endsWith(".m4a.part") } ?: return
-        for (part in parts) {
-            val dest = File(dir, stripPart(part.name) + ".orphan")
-            if (part.renameTo(dest)) {
-                Log.i(Storage.TAG, "retired orphan chunk ${dest.name}")
-                Events.record(this, "chunk_orphaned", "chunk", dest.name)
-            } else {
-                Log.w(Storage.TAG, "could not retire orphan ${part.name}")
-            }
+        val dirs = listOfNotNull(Storage.recordingDir(this), Storage.chunkDir(this))
+        for (part in dirs.flatMap { dir -> dir.listFiles { _, name -> name.endsWith(".m4a.part") }.orEmpty().toList() }) {
+            preserveFailedPart(part)
         }
     }
 
@@ -165,6 +169,7 @@ class AmbientService : Service() {
         handler.post {
             closeChunk()
             status.serviceStopped()
+            chunkPublisher?.stop()
         }
         sensors?.stop()
         inbox?.stop()
@@ -188,9 +193,9 @@ class AmbientService : Service() {
     }
 
     private fun openChunk(): Boolean {
-        val dir = Storage.chunkDir(this)
+        val dir = Storage.recordingDir(this)
         if (dir == null) {
-            status.recordFailure("no writable chunk directory (all-files access not granted?)")
+            status.recordFailure("no writable private recording directory")
             return false
         }
         // compact, NOT iso: this is a FILENAME. Extended ISO carries colons,
@@ -211,7 +216,11 @@ class AmbientService : Service() {
             samplingRate = rate
             val r = newRecorder()
             r.setOutputFile(part.absolutePath)
-            r.setOnErrorListener { _, what, extra -> onRecorderError("error $what/$extra") }
+            r.setOnErrorListener { _, what, extra ->
+                handler.post {
+                    if (recorder === r) onRecorderError("error $what/$extra")
+                }
+            }
             try {
                 r.prepare()
                 r.start()
@@ -220,10 +229,13 @@ class AmbientService : Service() {
                 // rather than dropping capture entirely — a degraded chunk
                 // beats a hole.
                 release(r)
+                if (!preserveFailedPart(part)) {
+                    status.recordFailure("cannot preserve failed recording ${part.name}")
+                    return false
+                }
                 Log.w(Storage.TAG, "$rate Hz recorder failed", e)
                 if (rate == SAMPLING_RATE_LADDER.last()) {
                     status.recordFailure("recorder start failed: $e")
-                    part.delete()
                     return false
                 }
                 continue
@@ -231,6 +243,21 @@ class AmbientService : Service() {
             recorder = r
             currentPart = part
             chunkStartedAtMs = System.currentTimeMillis()
+            chunkStartedElapsedMs = SystemClock.elapsedRealtime()
+            recordingSilenced = false
+            val callback = object : AudioManager.AudioRecordingCallback() {
+                override fun onRecordingConfigChanged(configs: MutableList<AudioRecordingConfiguration>) {
+                    if (recorder !== r) return
+                    reportRecordingConfiguration(r)
+                }
+            }
+            recordingCallback = callback
+            try {
+                r.registerAudioRecordingCallback({ task -> handler.post(task) }, callback)
+                reportRecordingConfiguration(r)
+            } catch (e: Exception) {
+                Log.w(Storage.TAG, "recording configuration unavailable", e)
+            }
             status.chunkOpened(part, chunkStartedAtMs, samplingRate)
             return true
         }
@@ -260,14 +287,18 @@ class AmbientService : Service() {
         currentPart = null
         if (r == null) return
 
+        val elapsedMs = (SystemClock.elapsedRealtime() - chunkStartedElapsedMs).coerceAtLeast(0L)
+        try {
+            recordingCallback?.let { r.unregisterAudioRecordingCallback(it) }
+        } catch (e: Exception) {
+            Log.w(Storage.TAG, "cannot unregister recording callback", e)
+        }
+        recordingCallback = null
         var stopped = false
         try {
             r.stop()
             stopped = true
         } catch (e: Exception) {
-            // stop() throws when the muxer never got a frame. The file is
-            // garbage in that case; keeping it would put a zero-length chunk in
-            // the lake.
             Log.w(Storage.TAG, "recorder stop failed", e)
             status.recordFailure("recorder stop failed: $e")
         } finally {
@@ -276,18 +307,21 @@ class AmbientService : Service() {
 
         if (part == null) return
         if (!stopped || !part.isFile || part.length() == 0L) {
-            part.delete()
+            preserveFailedPart(part)
             return
         }
+        val mediaMs = mediaDurationMs(part)
+        val chunkBytes = part.length()
         val finalFile = File(part.parentFile, stripPart(part.name))
-        if (!part.renameTo(finalFile)) {
+        if (finalFile.exists() || !part.renameTo(finalFile)) {
             Log.w(Storage.TAG, "could not rename $part -> $finalFile")
             status.recordFailure("rename failed for ${part.name}")
             return
         }
         val closedAt = System.currentTimeMillis()
+        val complete = CaptureIntegrity.complete(elapsedMs, mediaMs) && !recordingSilenced
         val peak = status.chunkPeak()
-        status.chunkClosed(finalFile, chunkStartedAtMs, closedAt)
+        status.chunkClosed(finalFile, closedAt, elapsedMs, mediaMs, complete, chunkBytes)
         // The chunk itself leaves the phone on the next drain, so the coverage
         // record has to outlive it: the ribbon and the hole list are reductions
         // of these lines, not of the directory listing. Peak amplitude travels
@@ -298,13 +332,24 @@ class AmbientService : Service() {
             "chunk_closed",
             "chunk", finalFile.name,
             "started_at", Stamps.iso(chunkStartedAtMs),
-            "seconds", ((closedAt - chunkStartedAtMs) / 1000L).coerceAtLeast(0L),
-            "bytes", finalFile.length(),
+            "seconds", (mediaMs ?: 0L) / 1000.0,
+            "elapsed_seconds", elapsedMs / 1000.0,
+            "closed_at", Stamps.iso(closedAt),
+            "duration_verified", mediaMs != null,
+            "complete", complete,
+            "microphone_silenced", recordingSilenced,
+            "bytes", chunkBytes,
             "peak_amplitude", peak,
             "captured_nothing", peak == 0,
             "sampling_rate", samplingRate,
         )
-        if (peak > 0) {
+        if (!complete) {
+            val detail = "incomplete audio: ${mediaMs ?: -1} ms encoded / $elapsedMs ms elapsed"
+            status.recordFailure(detail)
+            Events.record(this, "capture_failure", "detail", detail, "chunk", finalFile.name)
+            Notifications.alertCaptureBroken(this, detail)
+        }
+        if (complete && peak > 0) {
             // A chunk with sound in it is the only thing that retires the
             // alarm: "the service is running again" is exactly the claim that
             // was wrong when this whole failure mode was discovered.
@@ -312,7 +357,52 @@ class AmbientService : Service() {
         }
         // A closed chunk changes the ribbon and the unbroken count, which is
         // most of what the widget says.
+        chunkPublisher?.tick()
         dev.sinnix.phone.ui.widget.SinnixWidget.refresh(this)
+    }
+
+    private fun mediaDurationMs(file: File): Long? {
+        val metadata = MediaMetadataRetriever()
+        return try {
+            metadata.setDataSource(file.absolutePath)
+            metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+        } catch (e: Exception) {
+            Log.w(Storage.TAG, "cannot verify ${file.name}", e)
+            null
+        } finally {
+            metadata.release()
+        }
+    }
+
+    private fun preserveFailedPart(part: File): Boolean {
+        if (!part.isFile) return true
+        if (part.length() == 0L) {
+            return part.delete()
+        }
+        val dest = File(part.parentFile, stripPart(part.name).removeSuffix(".m4a") + "-failed${System.currentTimeMillis()}.m4a.orphan")
+        if (part.renameTo(dest)) {
+            Events.record(this, "chunk_orphaned", "chunk", dest.name, "bytes", dest.length())
+            return true
+        }
+        Log.e(Storage.TAG, "cannot preserve failed recording ${part.name}")
+        return false
+    }
+
+    private fun reportRecordingConfiguration(r: MediaRecorder) {
+        val config = try {
+            r.activeRecordingConfiguration
+        } catch (e: Exception) {
+            Log.w(Storage.TAG, "recording configuration unavailable", e)
+            null
+        } ?: return
+        recordingSilenced = recordingSilenced || config.isClientSilenced
+        Events.record(
+            this, "audio_recording_configuration",
+            "silenced", config.isClientSilenced,
+            "source", config.clientAudioSource,
+            "device_type", config.audioDevice?.type ?: -1,
+            "sample_rate", config.format.sampleRate,
+        )
     }
 
     private fun onRecorderError(detail: String) {
@@ -336,6 +426,10 @@ class AmbientService : Service() {
     private fun heartbeat() {
         val size = currentPart?.length() ?: 0L
         status.heartbeat(size, elapsedChunkSeconds(), sampleAmplitude())
+        if (recorder != null && CaptureIntegrity.underproducing(elapsedChunkSeconds() * 1000, size)) {
+            onRecorderError("audio byte production below expected AAC rate: $size bytes in ${elapsedChunkSeconds()}s")
+            return
+        }
         // Two lanes that need no schedule of their own: this process is
         // already awake, so power and sleep-estimate readings are free here
         // and would cost a wakeup anywhere else.
@@ -352,6 +446,7 @@ class AmbientService : Service() {
         mediaMirror?.tick()
         // Ships only chunks the recorder has already closed, so it can never
         // race the file this heartbeat is measuring.
+        chunkPublisher?.tick()
         chunkUploader?.tick()
 
         // A chunk whose file has stopped growing means the recorder has stopped
@@ -393,7 +488,7 @@ class AmbientService : Service() {
         }
 
     private fun elapsedChunkSeconds(): Long =
-        if (chunkStartedAtMs == 0L) 0L else (System.currentTimeMillis() - chunkStartedAtMs) / 1000L
+        if (recorder == null) 0L else (SystemClock.elapsedRealtime() - chunkStartedElapsedMs) / 1000L
 
     // --- notification ------------------------------------------------------
 
@@ -431,7 +526,7 @@ class AmbientService : Service() {
         const val HEARTBEAT_MILLIS = 20_000L
 
         /** Backoff after a recorder failure (mic stolen by a call, etc.). */
-        const val RETRY_MILLIS = 15_000L
+        const val RETRY_MILLIS = 2_000L
 
         /**
          * Capture rates in preference order. This is an archive lane, not an
