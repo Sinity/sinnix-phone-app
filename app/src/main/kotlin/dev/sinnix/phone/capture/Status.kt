@@ -41,6 +41,9 @@ class Status {
 
     private var lastChunk: String? = null
     private var lastChunkSeconds = 0L
+    private var lastChunkElapsedMs = 0L
+    private var lastChunkComplete = false
+    private var lastChunkDurationVerified = false
     private var lastChunkBytes = 0L
     private var lastChunkClosedAtMs = 0L
     private var lastChunkPeakAmplitude = 0
@@ -102,10 +105,13 @@ class Status {
     @Synchronized fun chunkPeak(): Int = chunkPeakAmplitude
 
     @Synchronized
-    fun chunkClosed(file: File, startedAtMs: Long, closedAtMs: Long) {
+    fun chunkClosed(file: File, closedAtMs: Long, elapsedMs: Long, mediaMs: Long?, complete: Boolean, bytes: Long) {
         lastChunk = file.name
-        lastChunkBytes = file.length()
-        lastChunkSeconds = ((closedAtMs - startedAtMs) / 1000L).coerceAtLeast(0L)
+        lastChunkBytes = bytes
+        lastChunkSeconds = (mediaMs ?: 0L) / 1000L
+        lastChunkElapsedMs = elapsedMs
+        lastChunkComplete = complete
+        lastChunkDurationVerified = mediaMs != null
         lastChunkClosedAtMs = closedAtMs
         lastChunkPeakAmplitude = chunkPeakAmplitude
         chunksClosedCount++
@@ -172,6 +178,7 @@ class Status {
             o.put("service_running", AmbientService.running)
             o.put("recording", recording)
             o.put("chunk_dir", dir.absolutePath)
+            o.put("recording_dir", Storage.recordingDir(c)?.absolutePath)
             o.put("chunk_dir_is_shared", dir.absolutePath == Storage.SHARED_DIR)
             o.put("all_files_access", Storage.haveAllFilesAccess())
             o.put("chunk_seconds_target", AmbientService.CHUNK_MILLIS / 1000L)
@@ -195,6 +202,9 @@ class Status {
             o.put("muted", recording && silentSamples >= MUTED_SAMPLES)
             o.put("last_chunk", lastChunk ?: JSONObject.NULL)
             o.put("last_chunk_seconds", lastChunkSeconds)
+            o.put("last_chunk_elapsed_seconds", lastChunkElapsedMs / 1000.0)
+            o.put("last_chunk_complete", lastChunkComplete)
+            o.put("last_chunk_duration_verified", lastChunkDurationVerified)
             o.put("last_chunk_bytes", lastChunkBytes)
             o.put("last_chunk_closed_at", isoOrNull(lastChunkClosedAtMs))
             o.put("last_chunk_peak_amplitude", lastChunkPeakAmplitude)

@@ -56,6 +56,12 @@ object Storage {
         return if (fallback.isDirectory || fallback.mkdirs()) fallback else null
     }
 
+    /** Private durable spool, bypassing shared-storage FUSE for the live encoder. */
+    fun recordingDir(ctx: Context): File? {
+        val dir = File(ctx.filesDir, "ambient-recording")
+        return if (dir.isDirectory || dir.mkdirs()) dir else null
+    }
+
     fun usingFallback(ctx: Context): Boolean {
         val dir = chunkDir(ctx)
         return dir != null && dir.absolutePath != SHARED_DIR

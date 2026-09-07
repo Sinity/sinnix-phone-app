@@ -64,7 +64,7 @@ class Coverage private constructor(val originMs: Long) {
                     originMs + i * 3_600_000L,
                     originMs + (j + 1L) * 3_600_000L,
                     if (state == SILENT) "recorder running, microphone produced no sample"
-                    else "no chunk closed in this window",
+                    else "audio coverage is incomplete",
                 )
             )
             i = j + 1
@@ -97,15 +97,29 @@ class Coverage private constructor(val originMs: Long) {
 
             val sawChunk = BooleanArray(CELLS)
             val sawSound = BooleanArray(CELLS)
+            val verifiedMs = LongArray(CELLS)
+            val incomplete = BooleanArray(CELLS)
+            val unverified = BooleanArray(CELLS)
 
             for (e in Events.recent(ctx, DAYS + 1)) {
                 if (e.optString("kind") != "chunk_closed") continue
                 var startedAt = Stamps.parse(e.optString("started_at"))
                 if (startedAt == 0L) startedAt = Stamps.parse(e.optString("ts"))
-                val idx = ((hourFloor(startedAt) - origin) / 3_600_000L).toInt()
-                if (idx < 0 || idx >= CELLS) continue
-                sawChunk[idx] = true
-                if (!e.optBoolean("captured_nothing", false)) sawSound[idx] = true
+                val durationMs = (e.optDouble("elapsed_seconds", e.optDouble("seconds", 0.0)) * 1000).toLong()
+                val endedAt = startedAt + durationMs.coerceAtLeast(0L)
+                val firstCell = ((hourFloor(startedAt) - origin) / 3_600_000L).toInt().coerceAtLeast(0)
+                val lastCell = ((hourFloor(endedAt.coerceAtLeast(startedAt + 1) - 1) - origin) / 3_600_000L).toInt().coerceAtMost(CELLS - 1)
+                for (idx in firstCell..lastCell) {
+                    sawChunk[idx] = true
+                    val sound = !e.optBoolean("captured_nothing", false)
+                    if (sound) sawSound[idx] = true
+                    if (!e.optBoolean("duration_verified", false)) unverified[idx] = true
+                    else if (!e.optBoolean("complete", false)) incomplete[idx] = true
+                    else if (sound) {
+                        val cellStart = origin + idx * 3_600_000L
+                        verifiedMs[idx] += (minOf(endedAt, cellStart + 3_600_000L) - maxOf(startedAt, cellStart)).coerceAtLeast(0L)
+                    }
+                }
             }
 
             // An hour with no chunk only counts as a hole once capture has been
@@ -125,7 +139,11 @@ class Coverage private constructor(val originMs: Long) {
             for (i in 0 until CELLS) {
                 c.cells[i] =
                     when {
-                        sawChunk[i] -> if (sawSound[i]) COVERED else SILENT
+                        sawChunk[i] && !sawSound[i] -> SILENT
+                        incomplete[i] -> HOLE
+                        unverified[i] -> UNKNOWN
+                        verifiedMs[i] >= 3_540_000L -> COVERED
+                        sawChunk[i] && i < CELLS - 1 -> HOLE
                         first >= 0 && i > first && i < last -> HOLE
                         else -> UNKNOWN
                     }
