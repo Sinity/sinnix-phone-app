@@ -51,7 +51,12 @@ class LockedBootReceiver : BroadcastReceiver() {
                 // Recorded in device-protected storage, since the estate's
                 // event log lives on /sdcard and is not mounted yet.
                 DirectBoot.note(ctx, "locked_boot")
-                if (DirectBoot.enabled(ctx)) DirectBootService.start(ctx)
+                // A delayed boot broadcast must use the unlocked storage route.
+                if (ctx.getSystemService(UserManager::class.java)?.isUserUnlocked == true) {
+                    DirectBoot.migrate(ctx)
+                } else if (DirectBoot.enabled(ctx)) {
+                    DirectBootService.start(ctx)
+                }
             }
             Intent.ACTION_USER_UNLOCKED -> {
                 DirectBoot.note(ctx, "user_unlocked")
@@ -213,11 +218,8 @@ class DirectBootService : android.app.Service() {
     override fun onBind(intent: Intent?): android.os.IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (getSystemService(UserManager::class.java)?.isUserUnlocked != false) {
-            close()
-            stopSelf()
-            return START_NOT_STICKY
-        }
+        // Foreground promotion must precede an early exit when unlock races startup.
+        dev.sinnix.phone.core.Notifications.ensureChannels(this)
         startForeground(
             NOTIFICATION_ID,
             android.app.Notification.Builder(this, dev.sinnix.phone.core.Notifications.CHANNEL_STATUS)
@@ -227,6 +229,12 @@ class DirectBootService : android.app.Service() {
                 .setOngoing(true)
                 .build(),
         )
+        if (getSystemService(UserManager::class.java)?.isUserUnlocked != false) {
+            close()
+            DirectBoot.migrate(this)
+            stopSelf()
+            return START_NOT_STICKY
+        }
         rotate()
         handler.removeCallbacks(unlockCheck)
         handler.postDelayed(unlockCheck, UNLOCK_CHECK_MILLIS)
