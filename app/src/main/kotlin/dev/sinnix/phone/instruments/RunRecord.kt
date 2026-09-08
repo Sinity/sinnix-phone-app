@@ -24,6 +24,9 @@ import org.json.JSONObject
  * are suspended rather than adjusted — a firmware change moves the input path,
  * and a correction factor invented after the fact would be worse than an
  * honest gap in the series.
+ *
+ * The outcome is persisted with each run so the result screen and stored
+ * headline cannot diverge.
  */
 object RunRecord {
 
@@ -32,6 +35,7 @@ object RunRecord {
         instrument: Instrument,
         startedAtMs: Long,
         fields: Map<String, Any?>,
+        outcome: Outcome,
         preflightUnmet: List<String> = emptyList(),
     ) {
         val epoch = Epoch.current(ctx)
@@ -55,6 +59,8 @@ object RunRecord {
         if (preflightUnmet.isNotEmpty()) {
             o.put("preflight_unmet", JSONArray(preflightUnmet))
         }
+        o.put("primary_metric", outcome.primaryLabel)
+        o.put("primary_value", outcome.primary ?: JSONObject.NULL)
         fields.forEach { (k, v) ->
             o.put(
                 k,
@@ -71,8 +77,51 @@ object RunRecord {
     /** Past runs of one instrument, oldest first, for the result sparkline. */
     fun history(ctx: Context, instrumentId: String, metric: String, days: Int = 60): List<Double> =
         Events.recentOfKind(ctx, days, "instrument_run")
-            .filter { it.optString("instrument") == instrumentId && it.has(metric) }
-            .mapNotNull { it.optDouble(metric).takeIf { d -> !d.isNaN() } }
+            .filter { it.optString("instrument") == instrumentId }
+            .mapNotNull { event ->
+                if (event.has("primary_metric")) {
+                    if (event.optString("primary_metric") != metric) return@mapNotNull null
+                    event.optDouble("primary_value").takeIf { value -> !value.isNaN() }
+                } else {
+                    legacyPrimary(event, metric)
+                }
+            }
+
+    /** Convert pre-primary records only when their old fields identify the same headline. */
+    private fun legacyPrimary(event: JSONObject, metric: String): Double? {
+        val engine = event.optString("engine")
+        return when (engine) {
+            "reaction" ->
+                if (metric == "median_rt_ms" || metric == "interval_sd_ms") {
+                    finite(event, metric)
+                } else null
+            "staircase" ->
+                if (metric == "threshold" || metric == "achievable_hz") finite(event, metric) else null
+            "forced_choice" ->
+                when (metric) {
+                    "interference_ms" -> finite(event, metric)
+                    "median_correct_rt_ms" ->
+                        if (finite(event, "interference_ms") == null) finite(event, metric) else null
+                    else -> null
+                }
+            "count", "counting" ->
+                if (metric != "cycles_correct") {
+                    null
+                } else {
+                    val correct = finite(event, "cycles_correct")
+                    val unaware = finite(event, "unaware_miscounts")
+                    val total = if (correct != null && unaware != null) correct + unaware else 0.0
+                    when {
+                        total > 0.0 -> (correct ?: return null) / total * 100.0
+                        else -> finite(event, "accuracy")?.takeIf { it in 0.0..1.0 }?.times(100.0)
+                    }
+                }
+            else -> null
+        }
+    }
+
+    private fun finite(event: JSONObject, field: String): Double? =
+        event.optDouble(field).takeIf { value -> !value.isNaN() }
 
     /**
      * One plain sentence about where a value sits in the operator's own spread.
