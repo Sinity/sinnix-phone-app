@@ -23,20 +23,10 @@ import java.io.File
  * keep; this lane copies, and the drain's `--ignore-existing` semantics are
  * what it reproduces.
  *
- * Which means it needs a way to know what prime already has, and the honest
- * cheap answer is an mtime watermark: the lake holds 149 camera files and
- * 196,946 downloads, put there by an `rsync -a` that preserved this phone's
- * own mtimes, so "newer than the newest file in the lane" is the same
- * question on both sides. The watermark is seeded from prime once per lane
- * and advanced locally after that.
- *
- * The blind spot, stated rather than discovered later: a file that arrives
- * with an OLD mtime -- a download whose server date is preserved, a photo
- * restored from a backup -- is behind the watermark and will not be offered.
- * It is a mirror of a directory the operator can also copy by hand, not a
- * capture lane whose gaps are unrecoverable, and buying the alternative
- * (asking prime about every one of 196,946 names) costs more than the case is
- * worth.
+ * Resume uses acknowledged source (mtime, relative path), never prime's
+ * upload mtimes. Old scalar preferences are deliberately ignored: a fresh
+ * cursor re-offers files and prime verifies duplicate bytes. Old timestamps
+ * arriving behind an established cursor still require an explicit rescan.
  */
 class MediaMirror(context: Context) {
 
@@ -86,61 +76,59 @@ class MediaMirror(context: Context) {
     private fun mirrorLane(lane: String, root: File): Boolean {
         if (!root.isDirectory) {
             note("$root is not readable")
-            return true // a missing Download directory is not prime's fault
+            return false
         }
-        var watermark = prefs().getLong(lane, -1L)
-        if (watermark < 0) {
-            val seed = hub.getJson("${HubBulk.PHONE}/lane?lane=$lane")
-            if (seed == null) {
-                note("unreachable")
-                return false
-            }
-            watermark = seed.optLong("newest_mtime_ms", 0L)
-            prefs().edit().putLong(lane, watermark).apply()
-            Events.record(
-                ctx, "media_mirror_seeded",
-                "lane", lane, "watermark_ms", watermark, "prime_files", seed.optInt("files", 0),
-            )
-        }
+        // The previous scalar cursor could skip unoffered files. Preserve
+        // those preferences but start the corrected traversal independently.
+        var cursor = MediaScan.Cursor(
+            prefs().getLong("$lane.cursor.time", -1L),
+            prefs().getString("$lane.cursor.path", "") ?: "",
+        )
 
-        // Keep scanning while the scans keep filling up.
-        //
-        // One scan is bounded (SCAN_CAP) so the list never holds a whole
-        // Downloads directory in memory -- but stopping after one bounded
-        // list is what made this a trickle, and twelve files every ten
-        // minutes against a lane holding 196,946 of them is a backlog
-        // measured in months. A full scan means there is more behind it, so
-        // the watermark advances and the next scan returns the next stretch.
-        // Re-walking the tree costs seconds of stat calls against transfers
-        // measured in gigabytes, which is the right side of that trade.
         var shipped = 0
         var scanned: Int
         do {
-            val pending = newerThan(root, watermark)
+            val pending = try {
+                MediaScan.oldest(root, cursor, SCAN_CAP, MAX_DEPTH)
+            } catch (e: Exception) {
+                note("media scan failed")
+                return false
+            }
             scanned = pending.size
-            var highest = watermark
-            for (file in pending) {
-                val length = file.length()
+            var highest = cursor
+            for (entry in pending) {
+                val file = entry.file
+                val length = entry.length
+                if (!entry.unchanged()) {
+                    persist(lane, highest)
+                    note("file changed during scan")
+                    return false
+                }
                 if (length <= 0L || length > MAX_BYTES) {
                     Events.record(
                         ctx, "media_mirror_skipped",
                         "lane", lane, "file", file.name, "bytes", length,
                     )
                     // Counted as seen: a 200 MB video is not going to shrink,
-                    // and holding the watermark back for it would re-walk it
+                    // and holding the cursor back for it would re-walk it
                     // forever.
-                    highest = maxOf(highest, file.lastModified())
+                    highest = entry.cursor
                     continue
                 }
                 val body =
                     try {
                         file.readBytes()
                     } catch (e: Exception) {
-                        persist(lane, watermark, highest)
+                        persist(lane, highest)
                         note("read failed: ${file.name}")
                         return false
                     }
-                val name = file.absolutePath.removePrefix(root.absolutePath).trimStart('/')
+                if (!entry.unchanged()) {
+                    persist(lane, highest)
+                    note("file changed during read")
+                    return false
+                }
+                val name = entry.cursor.path
                 // Encoded, because these names are the operator's, not the
                 // app's: `Samsung Health/report (1).pdf` has to survive the
                 // query string intact for prime to write the same name the
@@ -149,7 +137,7 @@ class MediaMirror(context: Context) {
                 when (val reply = hub.post("${HubBulk.PHONE}/chunk?lane=$lane&name=$encoded", body)) {
                     is HubBulk.Reply.Ok -> {
                         shipped++
-                        highest = maxOf(highest, file.lastModified())
+                        highest = entry.cursor
                     }
                     is HubBulk.Reply.Refused -> {
                         // A name prime will not take (too deep, an unexpected
@@ -159,20 +147,25 @@ class MediaMirror(context: Context) {
                             ctx, "media_mirror_refused",
                             "lane", lane, "file", name, "detail", reply.detail.take(120),
                         )
-                        highest = maxOf(highest, file.lastModified())
+                        if (!MediaScan.terminalRefusal(reply.code)) {
+                            persist(lane, highest)
+                            note("upload refused: ${reply.code}")
+                            return false
+                        }
+                        highest = entry.cursor
                     }
                     HubBulk.Reply.Unreachable -> {
                         // Everything acknowledged so far still counts, so an
                         // interrupted backlog resumes where it stopped rather
                         // than from the beginning.
-                        persist(lane, watermark, highest)
+                        persist(lane, highest)
                         note("unreachable")
                         return false
                     }
                 }
             }
-            persist(lane, watermark, highest)
-            watermark = maxOf(watermark, highest)
+            persist(lane, highest)
+            cursor = highest
         } while (scanned >= SCAN_CAP)
 
         if (shipped > 0) {
@@ -181,34 +174,10 @@ class MediaMirror(context: Context) {
         return true
     }
 
-    private fun persist(lane: String, watermark: Long, highest: Long) {
-        if (highest > watermark) prefs().edit().putLong(lane, highest).apply()
-    }
-
-    /**
-     * Files under [root] modified after [watermark], oldest first.
-     *
-     * Oldest first so the watermark only ever advances over files that have
-     * actually been offered: sorting the other way would mean one successful
-     * upload of today's photo skipping everything behind it.
-     */
-    private fun newerThan(root: File, watermark: Long): List<File> {
-        val out = ArrayList<File>()
-        collect(root, watermark, out, 0)
-        return out.sortedBy { it.lastModified() }
-    }
-
-    private fun collect(dir: File, watermark: Long, out: MutableList<File>, depth: Int) {
-        if (depth >= MAX_DEPTH || out.size >= SCAN_CAP) return
-        val entries = dir.listFiles() ?: return
-        for (entry in entries) {
-            if (out.size >= SCAN_CAP) return
-            when {
-                entry.isDirectory -> collect(entry, watermark, out, depth + 1)
-                entry.isFile && entry.lastModified() > watermark && !entry.name.startsWith(".") ->
-                    out.add(entry)
-            }
-        }
+    private fun persist(lane: String, cursor: MediaScan.Cursor) {
+        // Both cursor components must be published together.
+        prefs().edit().putLong("$lane.cursor.time", cursor.modified)
+            .putString("$lane.cursor.path", cursor.path).apply()
     }
 
     private fun note(reason: String?) {
@@ -231,8 +200,8 @@ class MediaMirror(context: Context) {
         /** Ten minutes: photos are not urgent, and the walk is not free. */
         private const val INTERVAL_MS = 600_000L
 
-        /** Prime accepts four path segments; the lane root is one of them. */
-        private const val MAX_DEPTH = 3
+        /** Prime accepts four relative path segments beneath the lane root. */
+        private const val MAX_DEPTH = 4
 
         /**
          * How many files one scan may collect. A bound on MEMORY, not on
