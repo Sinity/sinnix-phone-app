@@ -136,9 +136,10 @@ let
     checkPhase = ''
       runHook preCheck
       mkdir -p integrity-test
-      javac -d integrity-test app/src/main/java/dev/sinnix/phone/capture/*.java tools/*Test.java
+      javac -d integrity-test app/src/main/java/dev/sinnix/phone/capture/*.java app/src/main/java/dev/sinnix/phone/sync/*.java tools/*Test.java
       java -cp integrity-test CaptureIntegrityTest
       java -cp integrity-test VerifiedChunkCopyTest
+      java -cp integrity-test MediaScanTest
       runHook postCheck
     '';
 
