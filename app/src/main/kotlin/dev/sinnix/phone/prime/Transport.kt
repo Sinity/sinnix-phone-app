@@ -21,6 +21,9 @@ enum class Path(val label: String) {
     LIVE("sent · live"),
     QUEUED("queued · retrying"),
     FAILED("not sent"),
+    PARTIAL("partially completed · retained"),
+    HELD("needs review · request retained"),
+    UNSAVED("outcome not confirmed · request could not be retained"),
 }
 
 data class Reachability(val liveMs: Long?, val checkedAtMs: Long) {
@@ -70,17 +73,33 @@ class Transport(context: Context) {
     suspend fun send(kind: String, vararg keyValues: Any?): Path =
         withContext(Dispatchers.IO) {
             val intent = buildIntent(kind, *keyValues)
-            val token = intent.getString("send_token")
 
             val live = hub.postIntent(intent)
             if (live != null) {
                 lastReachability = Reachability(0L, System.currentTimeMillis())
+                val decision = IntentReplyPolicy.decide(
+                    live.opt("ok"), live.opt("outcome"), live.opt("kind"), kind,
+                )
+                val path = when (decision) {
+                    IntentReplyPolicy.Decision.COMPLETED -> Path.LIVE
+                    IntentReplyPolicy.Decision.RETRY ->
+                        if (Outbox.writeIntentObject(ctx, intent)) Path.QUEUED else Path.UNSAVED
+                    else -> {
+                        val retained = Outbox.writeIntentObject(ctx, intent, parked = true)
+                        when {
+                            !retained -> Path.UNSAVED
+                            decision == IntentReplyPolicy.Decision.PARTIAL -> Path.PARTIAL
+                            else -> Path.HELD
+                        }
+                    }
+                }
                 Events.append(
                     ctx,
-                    JSONObject(intent.toString()).put("kind", "intent_sent").put("path", "live")
-                        .put("intent_kind", kind),
+                    JSONObject(intent.toString()).put("kind", "intent_sent").put("path", path.name.lowercase())
+                        .put("intent_kind", kind).put("outcome", live.optString("outcome"))
+                        .put("detail", live.optString("detail").take(200)),
                 )
-                return@withContext Path.LIVE
+                return@withContext path
             }
 
             lastReachability = Reachability(null, System.currentTimeMillis())
@@ -131,14 +150,7 @@ class Transport(context: Context) {
      * answer at the next drain rather than never.
      */
     suspend fun answerJob(jobId: String, answer: String): Path =
-        withContext(Dispatchers.IO) {
-            if (hub.answerJob(jobId, answer) != null) {
-                Events.record(ctx, "job_answered", "job_id", jobId, "path", "live")
-                Path.LIVE
-            } else {
-                send("job_answer", "job_id", jobId, "answer", answer)
-            }
-        }
+        send("job_answer", "job_id", jobId, "answer", answer)
 
     /** Run a bounded action through the hub's action API. Live only, and honest about it. */
     suspend fun action(target: String, verb: String, expectedRevision: String?): Pair<Path, String> =
