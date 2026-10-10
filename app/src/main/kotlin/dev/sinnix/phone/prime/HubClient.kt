@@ -75,13 +75,6 @@ class HubClient(context: Context) {
     /** Post an intent. The same object the outbox would have written. */
     fun postIntent(intent: JSONObject): JSONObject? = post("$PHONE/intent", intent)
 
-    /** Answer an agent's question. */
-    fun answerJob(jobId: String, answer: String): JSONObject? =
-        post(
-            "$PHONE/job-answer",
-            JSONObject().put("job_id", jobId).put("answer", answer),
-        )
-
     /**
      * The estate's runtime inventory, as the ops reducer sees it.
      *

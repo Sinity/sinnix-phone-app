@@ -27,9 +27,9 @@ import org.json.JSONObject
  * Every intent carries a `send_token`. The same object can legitimately reach
  * prime twice -- posted live and then queued by a retry, or delivered by an
  * upload whose acknowledgement was lost on the way back -- and the dispatcher
- * uses the token to make the second execution a no-op that still emits its
- * receipt. Idempotency is the token's whole job; nothing else about it is
- * meaningful.
+ * binds the token to content and serializes delivery. Only completed effects
+ * are acknowledged; definitive failures can retry, while partial and uncertain
+ * effects are retained outside automatic replay.
  */
 object Outbox {
 
@@ -57,10 +57,11 @@ object Outbox {
         else null
     }
 
-    /** Post an already-built intent object (the live plane's retry path). */
-    fun writeIntentObject(ctx: Context, intent: JSONObject): Boolean {
+    /** Retain the original request. Park uncertain or partial effects outside automatic replay. */
+    fun writeIntentObject(ctx: Context, intent: JSONObject, parked: Boolean = false): Boolean {
         val token = intent.optString("send_token", UUID.randomUUID().toString())
-        return write(ctx, "intent-${Stamps.compact(System.currentTimeMillis())}-$token.json", intent)
+        val suffix = if (parked) ".json.rejected" else ".json"
+        return write(ctx, "intent-${Stamps.compact(System.currentTimeMillis())}-$token$suffix", intent)
     }
 
     private fun write(ctx: Context, name: String, o: JSONObject): Boolean {
