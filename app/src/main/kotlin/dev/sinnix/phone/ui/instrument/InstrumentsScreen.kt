@@ -10,15 +10,18 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import dev.sinnix.phone.decks.Decks
+import dev.sinnix.phone.instruments.Instrument
 import dev.sinnix.phone.instruments.OfferPolicy
 import dev.sinnix.phone.instruments.RunRecord
 import dev.sinnix.phone.ui.Card
@@ -26,6 +29,9 @@ import dev.sinnix.phone.ui.SectionLabel
 import dev.sinnix.phone.ui.Sparkline
 import dev.sinnix.phone.ui.VerbButton
 import dev.sinnix.phone.ui.theme.Palette
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 /**
  * The bench.
@@ -38,10 +44,15 @@ import dev.sinnix.phone.ui.theme.Palette
 @Composable
 fun InstrumentsScreen(nav: NavController) {
     val ctx = LocalContext.current
-    val check = remember { OfferPolicy.assembleCheck(ctx) }
+    var check by remember { mutableStateOf<List<Instrument>?>(null) }
     val shelf = remember { OfferPolicy.shelf(ctx) }
     val decks = remember { Decks.available(ctx) }
-    val recent = remember { OfferPolicy.recentRuns(ctx, 14).takeLast(6).reversed() }
+    var recent by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
+    LaunchedEffect(Unit) {
+        check = withContext(Dispatchers.IO) { OfferPolicy.assembleCheck(ctx) }
+        recent = withContext(Dispatchers.IO) { OfferPolicy.recentRuns(ctx, 14).takeLast(6).reversed() }
+    }
+    val proposal = check
 
     Column(
         Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
@@ -49,7 +60,9 @@ fun InstrumentsScreen(nav: NavController) {
     ) {
         Card {
             SectionLabel("Check")
-            if (check.isEmpty()) {
+            if (proposal == null) {
+                Text("Reading instrument history…", color = Palette.TextDim)
+            } else if (proposal.isEmpty()) {
                 Text(
                     "Nothing to propose right now.",
                     style = MaterialTheme.typography.bodyMedium,
@@ -57,12 +70,12 @@ fun InstrumentsScreen(nav: NavController) {
                 )
             } else {
                 Text(
-                    check.joinToString(" · ") { it.title },
+                    proposal.joinToString(" · ") { it.title },
                     style = MaterialTheme.typography.titleMedium,
                     color = Palette.Text,
                 )
                 Text(
-                    "${(check.sumOf { it.seconds } + 59) / 60} minutes",
+                    "${(proposal.sumOf { it.seconds } + 59) / 60} minutes",
                     style = MaterialTheme.typography.labelSmall,
                     color = Palette.TextFaint,
                 )
@@ -138,7 +151,10 @@ fun InstrumentsScreen(nav: NavController) {
                 SectionLabel("Recent runs")
                 recent.forEach { run ->
                     val id = run.optString("instrument")
-                    val history = remember(id) { RunRecord.history(ctx, id, "median_rt_ms") }
+                    var history by remember(id) { mutableStateOf<List<Double>>(emptyList()) }
+                    LaunchedEffect(id) {
+                        history = withContext(Dispatchers.IO) { RunRecord.history(ctx, id, "median_rt_ms") }
+                    }
                     Column(Modifier.padding(vertical = 6.dp)) {
                         Text(
                             "$id · ${run.optString("ts").takeLast(9).dropLast(1)}",

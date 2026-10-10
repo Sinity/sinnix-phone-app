@@ -4,7 +4,6 @@ import android.content.Context
 import android.util.Log
 import java.io.File
 import java.io.FileOutputStream
-import java.io.RandomAccessFile
 import java.util.Calendar
 import java.util.TimeZone
 import org.json.JSONObject
@@ -80,13 +79,15 @@ object Events {
      * ever asks for a week, and a log that grows for months should not be
      * walked to answer that.
      */
-    fun recent(ctx: Context, days: Int): List<JSONObject> {
+    fun recent(ctx: Context, days: Int): List<JSONObject> = recent(ctx, days, null)
+
+    private fun recent(ctx: Context, days: Int, wanted: Set<String>?): List<JSONObject> {
         val out = ArrayList<JSONObject>()
         val dir = Storage.phoneDir(ctx, Storage.EVENTS) ?: return out
         val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
         cal.add(Calendar.DAY_OF_YEAR, -(days - 1))
         repeat(days) {
-            readInto(File(dir, PREFIX + Stamps.day(cal.timeInMillis) + SUFFIX), out)
+            readInto(File(dir, PREFIX + Stamps.day(cal.timeInMillis) + SUFFIX), out, wanted)
             cal.add(Calendar.DAY_OF_YEAR, 1)
         }
         return out
@@ -95,7 +96,7 @@ object Events {
     /** The most recent [limit] records of the given kinds, newest last. */
     fun recentOfKind(ctx: Context, days: Int, vararg kinds: String): List<JSONObject> {
         val wanted = kinds.toSet()
-        return recent(ctx, days).filter { it.optString("kind") in wanted }
+        return recent(ctx, days, wanted)
     }
 
     /**
@@ -108,28 +109,18 @@ object Events {
      * the newest slice, so each file contributes at most its final TAIL_BYTES
      * -- an ordinary day is far smaller than the cap and unaffected.
      */
-    private const val TAIL_BYTES = 4L shl 20
+    private const val TAIL_BYTES = 4 shl 20
 
-    private fun readInto(file: File, out: MutableList<JSONObject>) {
+    private fun readInto(file: File, out: MutableList<JSONObject>, wanted: Set<String>?) {
         if (!file.isFile) return
         try {
-            RandomAccessFile(file, "r").use { input ->
-                if (input.length() > TAIL_BYTES) {
-                    input.seek(input.length() - TAIL_BYTES)
-                    // Mid-line landing is certain; drop the partial line.
-                    input.readLine()
-                }
-                while (true) {
-                    val line = input.readLine() ?: break
-                    if (line.isEmpty() || line.length > MAX_LINE_BYTES) continue
-                    // A truncated final line is the normal shape of a log whose
-                    // writer was killed mid-append. Skip it and keep the rest
-                    // rather than discarding the file.
-                    try {
-                        out.add(JSONObject(line))
-                    } catch (ignored: Exception) {
-                        // not a record; the next line still might be
-                    }
+            EventLogReader.readTail(file, TAIL_BYTES, MAX_LINE_BYTES) { line ->
+                // A partial final JSON record is skipped without losing the rest.
+                try {
+                    val record = JSONObject(line)
+                    if (wanted == null || record.optString("kind") in wanted) out.add(record)
+                } catch (ignored: Exception) {
+                    // Not a record; keep reading.
                 }
             }
         } catch (e: Exception) {
