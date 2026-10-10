@@ -95,7 +95,17 @@ class HubBulk(context: Context) {
                 val text = response.body?.string().orEmpty()
                 val json = try { JSONObject(text) } catch (e: Exception) { null }
                 if (response.isSuccessful && json?.optBoolean("ok", false) == true) {
-                    Reply.Ok(json)
+                    // Confirmation is a control reply, not a retained upload.
+                    val upload = request.url.encodedPath == "$PHONE/chunk" ||
+                        request.url.encodedPath == "$PHONE/events"
+                    if (upload && !UploadReceipt.matches(
+                            json.optLong("bytes", -1L), json.optString("sha256", ""),
+                            body.size, sha256(body),
+                        )) {
+                        Reply.Refused(response.code, json, "retained upload receipt does not match sent bytes")
+                    } else {
+                        Reply.Ok(json)
+                    }
                 } else {
                     Reply.Refused(
                         response.code,

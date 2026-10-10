@@ -140,6 +140,7 @@ let
       java -cp integrity-test CaptureIntegrityTest
       java -cp integrity-test VerifiedChunkCopyTest
       java -cp integrity-test MediaScanTest
+      java -cp integrity-test UploadReceiptTest
       runHook postCheck
     '';
 
