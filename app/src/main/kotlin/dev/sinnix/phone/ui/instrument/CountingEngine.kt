@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import dev.sinnix.phone.instruments.Instrument
+import dev.sinnix.phone.instruments.Outcome
 import dev.sinnix.phone.instruments.RunRecord
 import dev.sinnix.phone.ui.HoldRing
 import dev.sinnix.phone.ui.VerbButton
@@ -45,13 +46,17 @@ import kotlinx.coroutines.delay
  * instrument exists to measure.
  */
 @Composable
-fun CountingEngine(instrument: Instrument, onDone: (Outcome) -> Unit) {
+fun CountingEngine(
+    instrument: Instrument,
+    preflightUnmet: List<String> = emptyList(),
+    onDone: (Outcome) -> Unit,
+) {
     val ctx = LocalContext.current
     val startedAt = remember { System.currentTimeMillis() }
     val schandry = instrument.config["mode"] == "schandry"
 
     if (schandry) {
-        SchandryCounting(instrument, onDone)
+        SchandryCounting(instrument, preflightUnmet, onDone)
         return
     }
 
@@ -65,20 +70,9 @@ fun CountingEngine(instrument: Instrument, onDone: (Outcome) -> Unit) {
     fun finish() {
         if (done) return
         done = true
-        RunRecord.write(
-            ctx,
-            instrument,
-            startedAt,
-            mapOf(
-                "cycles_correct" to cyclesCorrect,
-                "unaware_miscounts" to unawareMiscounts,
-                "self_caught_resets" to selfCaughtResets,
-                "cycle_length" to cycle,
-            ),
-        )
         val total = cyclesCorrect + unawareMiscounts
         val accuracy = if (total == 0) null else cyclesCorrect.toDouble() / total
-        onDone(
+        val outcome =
             Outcome(
                 primaryLabel = "cycles_correct",
                 primary = accuracy?.times(100),
@@ -89,7 +83,20 @@ fun CountingEngine(instrument: Instrument, onDone: (Outcome) -> Unit) {
                     "$unawareMiscounts unnoticed · $selfCaughtResets caught yourself" +
                         " — these are kept apart on purpose",
             )
+        RunRecord.write(
+            ctx,
+            instrument,
+            startedAt,
+            mapOf(
+                "cycles_correct" to cyclesCorrect,
+                "unaware_miscounts" to unawareMiscounts,
+                "self_caught_resets" to selfCaughtResets,
+                "cycle_length" to cycle,
+            ),
+            outcome = outcome,
+            preflightUnmet = preflightUnmet,
         )
+        onDone(outcome)
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -160,7 +167,11 @@ fun CountingEngine(instrument: Instrument, onDone: (Outcome) -> Unit) {
  * accuracy immediately would train the estimate rather than measure it.
  */
 @Composable
-private fun SchandryCounting(instrument: Instrument, onDone: (Outcome) -> Unit) {
+private fun SchandryCounting(
+    instrument: Instrument,
+    preflightUnmet: List<String>,
+    onDone: (Outcome) -> Unit,
+) {
     val ctx = LocalContext.current
     val startedAt = remember { System.currentTimeMillis() }
     @Suppress("UNCHECKED_CAST")
@@ -186,6 +197,15 @@ private fun SchandryCounting(instrument: Instrument, onDone: (Outcome) -> Unit) 
         count = 0
         progress = 0f
         if (windowIndex + 1 >= windows.size) {
+            val outcome =
+                Outcome(
+                    primaryLabel = "",
+                    primary = null,
+                    primaryUnit = "",
+                    lowerIsBetter = false,
+                    fields = emptyMap(),
+                    note = "counted ${counts.joinToString(", ")} — accuracy comes back as a receipt",
+                )
             RunRecord.write(
                 ctx,
                 instrument,
@@ -195,17 +215,10 @@ private fun SchandryCounting(instrument: Instrument, onDone: (Outcome) -> Unit) 
                     "window_ms" to windows,
                     "scored_by" to "prime",
                 ),
+                outcome = outcome,
+                preflightUnmet = preflightUnmet,
             )
-            onDone(
-                Outcome(
-                    primaryLabel = "",
-                    primary = null,
-                    primaryUnit = "",
-                    lowerIsBetter = false,
-                    fields = emptyMap(),
-                    note = "counted ${counts.joinToString(", ")} — accuracy comes back as a receipt",
-                )
-            )
+            onDone(outcome)
         } else {
             windowIndex++
         }

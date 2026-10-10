@@ -29,6 +29,7 @@ import dev.sinnix.phone.instruments.Catalogue
 import dev.sinnix.phone.instruments.Engine
 import dev.sinnix.phone.instruments.Instrument
 import dev.sinnix.phone.instruments.OfferPolicy
+import dev.sinnix.phone.instruments.Outcome
 import dev.sinnix.phone.instruments.RunRecord
 import dev.sinnix.phone.ui.Card
 import dev.sinnix.phone.ui.SectionLabel
@@ -113,20 +114,10 @@ private fun NothingToRun(onDone: () -> Unit) {
 private sealed interface Stage {
     data class PreFlight(val index: Int) : Stage
 
-    data class Running(val index: Int) : Stage
+    data class Running(val index: Int, val preflightUnmet: List<String>) : Stage
 
     data class Result(val index: Int, val outcome: Outcome) : Stage
 }
-
-/** What an engine hands back. [primary] is the one number the result screen shows. */
-data class Outcome(
-    val primaryLabel: String,
-    val primary: Double?,
-    val primaryUnit: String,
-    val lowerIsBetter: Boolean,
-    val fields: Map<String, Any?>,
-    val note: String = "",
-)
 
 @Composable
 private fun RunnerFlow(queue: List<Instrument>, onFinished: () -> Unit) {
@@ -135,10 +126,12 @@ private fun RunnerFlow(queue: List<Instrument>, onFinished: () -> Unit) {
     when (val s = stage) {
         is Stage.PreFlight ->
             PreFlightScreen(queue[s.index], queue.size, s.index) {
-                stage = Stage.Running(s.index)
+                stage = Stage.Running(s.index, it)
             }
         is Stage.Running ->
-            EngineHost(queue[s.index]) { outcome -> stage = Stage.Result(s.index, outcome) }
+            EngineHost(queue[s.index], s.preflightUnmet) { outcome ->
+                stage = Stage.Result(s.index, outcome)
+            }
         is Stage.Result ->
             ResultScreen(queue[s.index], s.outcome, s.index + 1 < queue.size) {
                 if (s.index + 1 < queue.size) stage = Stage.PreFlight(s.index + 1) else onFinished()
@@ -161,7 +154,7 @@ private fun PreFlightScreen(
     instrument: Instrument,
     total: Int,
     index: Int,
-    onStart: () -> Unit,
+    onStart: (List<String>) -> Unit,
 ) {
     val ctx = LocalContext.current
     val unmet = remember(instrument) { unmetConditions(ctx, instrument) }
@@ -197,7 +190,7 @@ private fun PreFlightScreen(
             },
             Modifier.fillMaxWidth(),
         ) {
-            if (!blocked) onStart()
+            if (!blocked) onStart(unmet)
         }
     }
 }
@@ -217,13 +210,17 @@ private fun unmetConditions(ctx: Context, instrument: Instrument): List<String> 
 }
 
 @Composable
-private fun EngineHost(instrument: Instrument, onDone: (Outcome) -> Unit) {
+private fun EngineHost(
+    instrument: Instrument,
+    preflightUnmet: List<String>,
+    onDone: (Outcome) -> Unit,
+) {
     when (instrument.engine) {
-        Engine.REACTION -> ReactionEngine(instrument, onDone)
-        Engine.FORCED_CHOICE -> ForcedChoiceEngine(instrument, onDone)
-        Engine.STAIRCASE -> StaircaseEngine(instrument, onDone)
-        Engine.HOLD_STILL -> HoldStillEngine(instrument, onDone)
-        Engine.COUNTING -> CountingEngine(instrument, onDone)
+        Engine.REACTION -> ReactionEngine(instrument, preflightUnmet, onDone)
+        Engine.FORCED_CHOICE -> ForcedChoiceEngine(instrument, preflightUnmet, onDone)
+        Engine.STAIRCASE -> StaircaseEngine(instrument, preflightUnmet, onDone)
+        Engine.HOLD_STILL -> HoldStillEngine(instrument, preflightUnmet, onDone)
+        Engine.COUNTING -> CountingEngine(instrument, preflightUnmet, onDone)
     }
 }
 
@@ -245,7 +242,7 @@ private fun ResultScreen(
     val ctx = LocalContext.current
     val history =
         remember(instrument.id) {
-            RunRecord.history(ctx, instrument.id, outcome.primaryLabel.lowercase().replace(' ', '_'))
+            RunRecord.history(ctx, instrument.id, outcome.primaryLabel)
         }
 
     Column(
