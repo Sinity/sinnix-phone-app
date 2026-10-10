@@ -13,6 +13,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,6 +40,9 @@ import dev.sinnix.phone.ui.SectionLabel
 import dev.sinnix.phone.ui.StatRow
 import dev.sinnix.phone.ui.VerbButton
 import dev.sinnix.phone.ui.theme.Palette
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.util.Date
 
 /**
@@ -64,7 +68,13 @@ import java.util.Date
 @Composable
 fun CaptureScreen(nav: NavController) {
     val ctx = LocalContext.current
-    var coverage by remember { mutableStateOf(Coverage.of(ctx, System.currentTimeMillis())) }
+    var coverage by remember { mutableStateOf<Coverage?>(null) }
+    var recentChunks by remember { mutableStateOf<List<JSONObject>?>(null) }
+    LaunchedEffect(Unit) {
+        coverage = withContext(Dispatchers.IO) { Coverage.of(ctx, System.currentTimeMillis()) }
+        recentChunks = withContext(Dispatchers.IO) { Events.recentOfKind(ctx, 2, "chunk_closed").takeLast(12).reversed() }
+    }
+    val holes = coverage?.holes.orEmpty()
     var status by remember { mutableStateOf(Status.read(ctx)) }
     var enabled by remember { mutableStateOf(Prefs.enabled(ctx)) }
 
@@ -84,13 +94,14 @@ fun CaptureScreen(nav: NavController) {
     ) {
         Card {
             SectionLabel("Phone side · 7 days")
-            RibbonView(coverage)
-            Text(
-                "unbroken ${coverage.unbrokenHours()}h · " +
-                    "${coverage.coveredHours()} of ${coverage.knownHours()} known hours",
-                style = MaterialTheme.typography.labelSmall,
-                color = Palette.TextDim,
-            )
+            coverage?.let { c ->
+                RibbonView(c)
+                Text(
+                    "unbroken ${c.unbrokenHours()}h · ${c.coveredHours()} of ${c.knownHours()} known hours",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Palette.TextDim,
+                )
+            } ?: Text("Reading capture history…", color = Palette.TextDim)
         }
 
         Card {
@@ -161,10 +172,10 @@ fun CaptureScreen(nav: NavController) {
 
         SelfAccounting()
 
-        if (coverage.holes.isNotEmpty()) {
+        if (holes.isNotEmpty()) {
             Card {
                 SectionLabel("Holes")
-                coverage.holes.takeLast(8).reversed().forEach { hole ->
+                holes.takeLast(8).reversed().forEach { hole ->
                     Column(Modifier.padding(vertical = 6.dp)) {
                         Text(
                             "${Stamps.iso(hole.startMs).drop(5).dropLast(4)} · ${hole.hours}h",
@@ -183,7 +194,8 @@ fun CaptureScreen(nav: NavController) {
 
         Card {
             SectionLabel("Recent chunks")
-            Events.recentOfKind(ctx, 2, "chunk_closed").takeLast(12).reversed().forEach { e ->
+            if (recentChunks == null) Text("Reading recent chunks…", color = Palette.TextDim)
+            recentChunks.orEmpty().forEach { e ->
                 val silent = e.optBoolean("captured_nothing", false)
                 GradeRow(
                     if (silent) Grade.BROKEN else Grade.EVIDENCED,

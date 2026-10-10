@@ -101,8 +101,7 @@ class Coverage private constructor(val originMs: Long) {
             val incomplete = BooleanArray(CELLS)
             val unverified = BooleanArray(CELLS)
 
-            for (e in Events.recent(ctx, DAYS + 1)) {
-                if (e.optString("kind") != "chunk_closed") continue
+            for (e in Events.recentOfKind(ctx, DAYS + 1, "chunk_closed")) {
                 var startedAt = Stamps.parse(e.optString("started_at"))
                 if (startedAt == 0L) startedAt = Stamps.parse(e.optString("ts"))
                 val durationMs = (e.optDouble("elapsed_seconds", e.optDouble("seconds", 0.0)) * 1000).toLong()

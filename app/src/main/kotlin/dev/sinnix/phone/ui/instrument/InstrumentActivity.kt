@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,6 +38,8 @@ import dev.sinnix.phone.ui.Sparkline
 import dev.sinnix.phone.ui.VerbButton
 import dev.sinnix.phone.ui.theme.Palette
 import dev.sinnix.phone.ui.theme.SinnixTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * The runner.
@@ -57,16 +60,22 @@ class InstrumentActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val ids = intent?.getStringArrayExtra(EXTRA_IDS)?.toList().orEmpty()
-        val queue =
-            if (ids.isEmpty()) OfferPolicy.assembleCheck(this) else ids.mapNotNull(dev.sinnix.phone.decks.Decks::resolve)
 
         setContent {
             SinnixTheme {
+                var queue by remember { mutableStateOf<List<Instrument>?>(null) }
+                LaunchedEffect(Unit) {
+                    queue = withContext(Dispatchers.IO) {
+                        if (ids.isEmpty()) OfferPolicy.assembleCheck(this@InstrumentActivity)
+                        else ids.mapNotNull(dev.sinnix.phone.decks.Decks::resolve)
+                    }
+                }
                 Box(Modifier.fillMaxSize().background(Palette.Background)) {
-                    if (queue.isEmpty()) {
-                        NothingToRun { finish() }
-                    } else {
-                        RunnerFlow(queue) { finish() }
+                    val loaded = queue
+                    when {
+                        loaded == null -> Text("Reading instrument history…", color = Palette.TextDim)
+                        loaded.isEmpty() -> NothingToRun { finish() }
+                        else -> RunnerFlow(loaded) { finish() }
                     }
                 }
             }
@@ -240,10 +249,10 @@ private fun ResultScreen(
     onNext: () -> Unit,
 ) {
     val ctx = LocalContext.current
-    val history =
-        remember(instrument.id) {
-            RunRecord.history(ctx, instrument.id, outcome.primaryLabel)
-        }
+    var history by remember(instrument.id, outcome.primaryLabel) { mutableStateOf<List<Double>?>(null) }
+    LaunchedEffect(instrument.id, outcome.primaryLabel) {
+        history = withContext(Dispatchers.IO) { RunRecord.history(ctx, instrument.id, outcome.primaryLabel) }
+    }
 
     Column(
         Modifier.fillMaxSize().padding(24.dp),
@@ -257,15 +266,17 @@ private fun ResultScreen(
                 color = Palette.Text,
             )
             Spacer(Modifier.height(12.dp))
-            if (history.size >= 2) {
-                Sparkline(history + outcome.primary, invertGood = outcome.lowerIsBetter)
-                Spacer(Modifier.height(8.dp))
-            }
-            Text(
-                RunRecord.context(history, outcome.primary, outcome.lowerIsBetter),
-                style = MaterialTheme.typography.bodyMedium,
-                color = Palette.TextDim,
-            )
+            history?.let { observed ->
+                if (observed.size >= 2) {
+                    Sparkline(observed + outcome.primary, invertGood = outcome.lowerIsBetter)
+                    Spacer(Modifier.height(8.dp))
+                }
+                Text(
+                    RunRecord.context(observed, outcome.primary, outcome.lowerIsBetter),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Palette.TextDim,
+                )
+            } ?: Text("Reading result history…", color = Palette.TextDim)
         } else {
             Text("Captured", style = MaterialTheme.typography.displaySmall, color = Palette.Text)
             Text(
