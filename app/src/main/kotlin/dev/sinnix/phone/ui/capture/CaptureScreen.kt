@@ -74,6 +74,7 @@ fun CaptureScreen(nav: NavController) {
     var latestUpload by remember { mutableStateOf<JSONObject?>(null) }
     var latestBlock by remember { mutableStateOf<JSONObject?>(null) }
     var pendingAudio by remember { mutableStateOf<Int?>(null) }
+    var pendingSpool by remember { mutableStateOf<Int?>(null) }
     var pendingOutbox by remember { mutableStateOf<Int?>(null) }
     var chunkDirectory by remember { mutableStateOf<String?>(null) }
     var enabled by remember { mutableStateOf(Prefs.enabled(ctx)) }
@@ -82,7 +83,7 @@ fun CaptureScreen(nav: NavController) {
         recentChunks = withContext(Dispatchers.IO) { Events.recentOfKind(ctx, 2, "chunk_closed").takeLast(12).reversed() }
         while (isActive) {
             val snapshot = withContext(Dispatchers.IO) {
-                val transfers = Events.recentOfKind(ctx, 1, "chunk_uploaded", "chunk_upload_undeletable", "chunk_upload_blocked", "chunk_upload_ready")
+                val transfers = Events.recentOfKind(ctx, 2, "chunk_uploaded", "chunk_upload_undeletable", "chunk_upload_blocked", "chunk_upload_ready")
                 val dir = Storage.chunkDir(ctx)
                 val entries = dir?.listFiles()
                 val candidates = entries?.filter { it.name.endsWith(".m4a") || it.name.endsWith(".m4a.orphan") }
@@ -91,6 +92,8 @@ fun CaptureScreen(nav: NavController) {
                     transfers.lastOrNull { it.optString("kind") in setOf("chunk_uploaded", "chunk_upload_undeletable") },
                     transfers.lastOrNull { it.optString("kind") in setOf("chunk_upload_blocked", "chunk_upload_ready") },
                     candidates?.takeIf { files -> files.all { it.isFile } }?.size,
+                    Storage.recordingDir(ctx)?.listFiles()?.filter { it.name.endsWith(".m4a") || it.name.endsWith(".orphan") }
+                        ?.takeIf { files -> files.all { it.isFile } }?.size,
                     Outbox.pendingCount(ctx), dir?.absolutePath,
                 )
             }
@@ -98,6 +101,7 @@ fun CaptureScreen(nav: NavController) {
             latestUpload = snapshot.upload
             latestBlock = snapshot.control
             pendingAudio = snapshot.audio
+            pendingSpool = snapshot.spool
             pendingOutbox = snapshot.outbox
             chunkDirectory = snapshot.directory
             delay(20_000)
@@ -179,18 +183,19 @@ fun CaptureScreen(nav: NavController) {
             val uploadTime = Stamps.parse(uploadAt)
             val uploadAge = if (uploadTime > 0) (System.currentTimeMillis() - uploadTime) / 1000 else -1L
             val blocked = latestBlock?.optString("kind") == "chunk_upload_blocked" &&
-                Stamps.parse(latestBlock?.optString("ts").orEmpty()) > uploadTime && (pendingAudio ?: 0) > 0
+                Stamps.parse(latestBlock?.optString("ts").orEmpty()).let { it > 0 && it >= uploadTime } && (pendingAudio ?: 0) > 0
             GradeRow(
-                Grade.of(measured = (uploadAge in 0..7200 || blocked) && pendingAudio != null, healthy = !blocked && uploadAge in 0..7200),
+                Grade.of(measured = (uploadAge in 0..7200 || blocked) && pendingAudio != null && pendingSpool != null, healthy = !blocked && uploadAge in 0..7200),
                 when {
                     blocked -> "audio upload is blocked"
                     uploadTime > 0 -> "last verified audio upload $uploadAt"
-                    else -> "no verified audio upload receipt yet"
+                    else -> "no recent verified audio upload receipt"
                 },
                 if (blocked) latestBlock?.optString("reason").orEmpty()
                 else "receipts confirm retained bytes; open recordings are not queued",
             )
             StatRow("closed audio queued", pendingAudio?.toString() ?: "unavailable")
+            StatRow("closed recorder files awaiting publication", pendingSpool?.toString() ?: "unavailable")
             StatRow("outbox items queued", pendingOutbox?.toString() ?: "unavailable")
             StatRow("chunk directory", chunkDirectory ?: "unavailable")
         }
@@ -268,7 +273,7 @@ fun CaptureScreen(nav: NavController) {
 
 private data class TransferSnapshot(
     val status: JSONObject?, val upload: JSONObject?, val control: JSONObject?,
-    val audio: Int?, val outbox: Int?, val directory: String?,
+    val audio: Int?, val spool: Int?, val outbox: Int?, val directory: String?,
 )
 
 /**
