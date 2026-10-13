@@ -11,7 +11,7 @@
 # fetch through mitm-cache into the committed deps.json. Regenerate that
 # lockfile after any dependency change with:
 #
-#   $(nix-build /realm/project/sinnix -A packages.x86_64-linux.sinnix-phone-app.mitmCache.updateScript)
+#   $(nix build /realm/project/sinnix/repo#sinnix-phone-app.mitmCache.updateScript --no-link --print-out-paths)
 #
 # The APK is still emitted UNSIGNED, and that is still load-bearing: signing
 # happens in sinnix-phone-app-install against a keystore outside the store, so
@@ -73,6 +73,8 @@ let
         !(builtins.elem base [
           "pkg.nix"
           "deps.json"
+          "gradle-indexes"
+          "index-snapshots.py"
           ".agent"
           ".gradle"
           "build"
@@ -84,10 +86,51 @@ let
       jdk
     ];
 
-    mitmCache = gradle.fetchDeps {
-      pkg = finalAttrs.finalPackage;
-      data = ./deps.json;
-    };
+    # Google's Maven/Play SDK indexes change independently of pinned artifacts.
+    # Keep their exact bytes locally so an upstream release cannot break a build.
+    mitmCache =
+      let
+        dependencyData = lib.importJSON ./deps.json;
+        indexHost = "https://maven.google.com";
+        indexRows = lib.filterAttrs (name: _: lib.hasSuffix "-index" name) dependencyData.${indexHost};
+        immutableData = dependencyData // {
+          "https://dl.google.com" = builtins.removeAttrs dependencyData."https://dl.google.com" [
+            "play-sdk/index/snapshot"
+          ];
+          ${indexHost} = lib.filterAttrs (
+            name: _: !builtins.hasAttr name indexRows
+          ) dependencyData.${indexHost};
+        };
+        recordingCache = gradle.fetchDeps {
+          pkg = finalAttrs.finalPackage;
+          data = ./deps.json;
+        };
+      in
+      (gradle.fetchDeps {
+        pkg = finalAttrs.finalPackage;
+        data = immutableData;
+      }).overrideAttrs
+        (old: {
+          nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.python3 ];
+          buildCommand = ''
+            python ${./tools/index-snapshots.py} ${./deps.json} ${./gradle-indexes}
+            ${old.buildCommand}
+            mkdir -p "$out/https/dl.google.com/play-sdk/index"
+            ln -s ${./gradle-indexes/play-sdk-snapshot.gz} "$out/https/dl.google.com/play-sdk/index/snapshot.gz"
+          ''
+          + lib.concatMapStringsSep "\n" (name: ''
+            mkdir -p "$out/https/maven.google.com/${dirOf name}"
+            ln -s ${./gradle-indexes + "/${name}.xml"} "$out/https/maven.google.com/${name}.xml"
+          '') (builtins.attrNames indexRows);
+          passthru = (old.passthru or { }) // {
+            updateScript = pkgs.writeShellScript "update-phone-dependencies" ''
+              set -euo pipefail
+              test -f pkg.nix && test -d app
+              ${recordingCache.updateScript} "$@"
+              ${pkgs.python3}/bin/python ${./tools/index-snapshots.py} --refresh deps.json gradle-indexes
+            '';
+          };
+        });
 
     dontConfigure = false;
 
