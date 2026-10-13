@@ -1,7 +1,9 @@
-"""Retain mutable Google Maven indexes and verify their dependency-cache hashes."""
+"""Retain Google Maven and Play SDK indexes and verify their cache hashes."""
 import argparse
 import base64
 import hashlib
+import gzip
+import io
 import json
 from pathlib import Path
 import urllib.request
@@ -37,8 +39,30 @@ for key, row in indexes.items():
         row["xml"] = digest
     elif row["xml"] != digest:
         raise SystemExit("index snapshot differs from deps.json: " + key)
+# AGP also reads this rolling Play SDK index during a normal release build.
+play_row = data.get("https://dl.google.com", {}).get("play-sdk/index/snapshot")
+if play_row is not None:
+    path = args.snapshots / "play-sdk-snapshot.gz"
+    if args.refresh:
+        with urllib.request.urlopen("https://dl.google.com/play-sdk/index/snapshot.gz", timeout=15) as response:
+            payload = response.read(2_000_001)
+    else:
+        payload = path.read_bytes()
+    if len(payload) > 2_000_000:
+        raise SystemExit("Play SDK index exceeds metadata bound")
+    with gzip.GzipFile(fileobj=io.BytesIO(payload)) as compressed:
+        if len(compressed.read(20_000_001)) > 20_000_000:
+            raise SystemExit("Play SDK index exceeds decompressed bound")
+    digest = "sha256-" + base64.b64encode(hashlib.sha256(payload).digest()).decode()
+    if args.refresh:
+        staging = path.with_suffix(".gz.new")
+        staging.write_bytes(payload)
+        staging.replace(path)
+        play_row["gz"] = digest
+    elif play_row["gz"] != digest:
+        raise SystemExit("Play SDK index snapshot differs from deps.json")
 if args.refresh:
     staging = args.deps.with_suffix(".json.new")
     staging.write_text(json.dumps(data, indent=1) + "\n")
     staging.replace(args.deps)
-print(f"{len(indexes)} Maven index snapshots {'refreshed' if args.refresh else 'verified'}")
+print(f"{len(indexes)} Maven indexes and {int(play_row is not None)} Play SDK index {'refreshed' if args.refresh else 'verified'}")

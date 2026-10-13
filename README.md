@@ -5,7 +5,7 @@ capture, instruments, ingress, and a remote for the workstation. Kotlin +
 Compose, built reproducibly through the nixpkgs Gradle setup hook with a
 committed `deps.json` (regenerate via the derivation's
 `mitmCache.updateScript` from this repository after any dependency change).
-Google Maven group/master indexes are retained under `gradle-indexes/`; the
+Google Maven group/master indexes and the Play SDK index are retained under `gradle-indexes/`; the
 updater refreshes them, and the cache build checks their hashes against
 `deps.json`. New upstream index contents do not change existing builds.
 
