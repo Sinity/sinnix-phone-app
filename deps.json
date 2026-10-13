@@ -925,31 +925,31 @@
  },
  "https://maven.google.com": {
   "androidx/activity/group-index": {
-   "xml": "sha256-pOXdVTd8w6bAsTCm8Lsi+8ojwg4Hi3VMqh0XrYxFHdE="
+   "xml": "sha256-AkMgYEHPJ9kkrrhCfyWJDvuqIYieiaX4dcvB/2MHqKE="
   },
   "androidx/compose/group-index": {
-   "xml": "sha256-s3hG4y128kFOqkyVw8+leK1IdaZAiNhBiZ1QtuhiJ4E="
+   "xml": "sha256-xeqTPTL2JM0zUUa2pieE/oPG/HsW6PSmo7zf/CMRgRE="
   },
   "androidx/core/group-index": {
-   "xml": "sha256-4EHdtGPkScbgbmXQIIjJwqBlxsvsjBp0pbH+XauY/HE="
+   "xml": "sha256-CY6X5iNiM0CWJLDjqCEXjWi2DniyXdYZHHthNp2sr3Y="
   },
   "androidx/glance/group-index": {
-   "xml": "sha256-YUclSeJ+kIe25MzMatRyj8P2+XUaGEDYTbdW62fXPss="
+   "xml": "sha256-iQM1G2tXscG1nn65o3ITzflTQiS+qzDfwAi3sgKpjJc="
   },
   "androidx/health/connect/group-index": {
-   "xml": "sha256-tSkqblZ1itTodYSfCP1nj/z53axpMVpNZ46RnHuoKMg="
+   "xml": "sha256-O6c28aSdH8qHtUT0wLbJsVGwTtxqJ+I1UKczHQW0T0c="
   },
   "androidx/lifecycle/group-index": {
-   "xml": "sha256-DL8JBelaC7mp302J9vq0UGz8cOhTPV4NycZ+CYyb/iI="
+   "xml": "sha256-G9ov8/NLculMTdo8NlW23HBVsfXGOVg/hxJnAML9KsE="
   },
   "androidx/navigation/group-index": {
-   "xml": "sha256-Ba40TCkqbN6Fbs9X6qqt8SRB81vFnEGFJfdlspA0N+s="
+   "xml": "sha256-GGfe1Qb0bnd6lIXjGlE1U01gQZfKOn5fUysqdULeQrE="
   },
   "com/android/application/group-index": {
-   "xml": "sha256-/UdjGs5CDkr7kcH06CPtAtRbfX7WFYhDEETlP+RwV1k="
+   "xml": "sha256-y9GyGwHcUCb5IA4LYkp+mB62dPowxmxptUxpiUAao80="
   },
   "master-index": {
-   "xml": "sha256-RE9n8mk4liYNj4dWFjRjrHjMsFE5yETce8NSmvsvhy4="
+   "xml": "sha256-TY5pdjdTh6YY8xjvPuyvu051HkN2jO/njbNfYIjGibY="
   }
  },
  "https://repo.maven.apache.org/maven2": {

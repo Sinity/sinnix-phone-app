@@ -73,6 +73,8 @@ let
         !(builtins.elem base [
           "pkg.nix"
           "deps.json"
+          "gradle-indexes"
+          "index-snapshots.py"
           ".agent"
           ".gradle"
           "build"
@@ -84,10 +86,46 @@ let
       jdk
     ];
 
-    mitmCache = gradle.fetchDeps {
-      pkg = finalAttrs.finalPackage;
-      data = ./deps.json;
-    };
+    # Google's group/master indexes change independently of pinned artifacts.
+    # Keep their exact bytes locally so an upstream release cannot break a build.
+    mitmCache =
+      let
+        dependencyData = lib.importJSON ./deps.json;
+        indexHost = "https://maven.google.com";
+        indexRows = lib.filterAttrs (name: _: lib.hasSuffix "-index" name) dependencyData.${indexHost};
+        immutableData = dependencyData // {
+          ${indexHost} = lib.filterAttrs (
+            name: _: !builtins.hasAttr name indexRows
+          ) dependencyData.${indexHost};
+        };
+        recordingCache = gradle.fetchDeps {
+          pkg = finalAttrs.finalPackage;
+          data = ./deps.json;
+        };
+      in
+      (gradle.fetchDeps {
+        pkg = finalAttrs.finalPackage;
+        data = immutableData;
+      }).overrideAttrs
+        (old: {
+          nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.python3 ];
+          buildCommand = ''
+            python ${./tools/index-snapshots.py} ${./deps.json} ${./gradle-indexes}
+            ${old.buildCommand}
+          ''
+          + lib.concatMapStringsSep "\n" (name: ''
+            mkdir -p "$out/https/maven.google.com/${dirOf name}"
+            ln -s ${./gradle-indexes + "/${name}.xml"} "$out/https/maven.google.com/${name}.xml"
+          '') (builtins.attrNames indexRows);
+          passthru = (old.passthru or { }) // {
+            updateScript = pkgs.writeShellScript "update-phone-dependencies" ''
+              set -euo pipefail
+              test -f pkg.nix && test -d app
+              ${recordingCache.updateScript} "$@"
+              ${pkgs.python3}/bin/python ${./tools/index-snapshots.py} --refresh deps.json gradle-indexes
+            '';
+          };
+        });
 
     dontConfigure = false;
 
