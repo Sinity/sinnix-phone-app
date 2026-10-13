@@ -30,8 +30,6 @@ import dev.sinnix.phone.core.Events
 import dev.sinnix.phone.core.Prefs
 import dev.sinnix.phone.core.Stamps
 import dev.sinnix.phone.core.Storage
-import dev.sinnix.phone.instruments.OfferPolicy
-import dev.sinnix.phone.sync.Inbox
 import dev.sinnix.phone.sync.Outbox
 import dev.sinnix.phone.ui.Card
 import dev.sinnix.phone.ui.GradeRow
@@ -41,6 +39,8 @@ import dev.sinnix.phone.ui.StatRow
 import dev.sinnix.phone.ui.VerbButton
 import dev.sinnix.phone.ui.theme.Palette
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.util.Date
@@ -70,13 +70,40 @@ fun CaptureScreen(nav: NavController) {
     val ctx = LocalContext.current
     var coverage by remember { mutableStateOf<Coverage?>(null) }
     var recentChunks by remember { mutableStateOf<List<JSONObject>?>(null) }
+    var status by remember { mutableStateOf<JSONObject?>(null) }
+    var latestUpload by remember { mutableStateOf<JSONObject?>(null) }
+    var latestBlock by remember { mutableStateOf<JSONObject?>(null) }
+    var pendingAudio by remember { mutableStateOf<Int?>(null) }
+    var pendingOutbox by remember { mutableStateOf<Int?>(null) }
+    var chunkDirectory by remember { mutableStateOf<String?>(null) }
+    var enabled by remember { mutableStateOf(Prefs.enabled(ctx)) }
     LaunchedEffect(Unit) {
         coverage = withContext(Dispatchers.IO) { Coverage.of(ctx, System.currentTimeMillis()) }
         recentChunks = withContext(Dispatchers.IO) { Events.recentOfKind(ctx, 2, "chunk_closed").takeLast(12).reversed() }
+        while (isActive) {
+            val snapshot = withContext(Dispatchers.IO) {
+                val transfers = Events.recentOfKind(ctx, 1, "chunk_uploaded", "chunk_upload_undeletable", "chunk_upload_blocked", "chunk_upload_ready")
+                val dir = Storage.chunkDir(ctx)
+                val entries = dir?.listFiles()
+                val candidates = entries?.filter { it.name.endsWith(".m4a") || it.name.endsWith(".m4a.orphan") }
+                TransferSnapshot(
+                    Status.read(ctx),
+                    transfers.lastOrNull { it.optString("kind") in setOf("chunk_uploaded", "chunk_upload_undeletable") },
+                    transfers.lastOrNull { it.optString("kind") in setOf("chunk_upload_blocked", "chunk_upload_ready") },
+                    candidates?.takeIf { files -> files.all { it.isFile } }?.size,
+                    Outbox.pendingCount(ctx), dir?.absolutePath,
+                )
+            }
+            status = snapshot.status
+            latestUpload = snapshot.upload
+            latestBlock = snapshot.control
+            pendingAudio = snapshot.audio
+            pendingOutbox = snapshot.outbox
+            chunkDirectory = snapshot.directory
+            delay(20_000)
+        }
     }
     val holes = coverage?.holes.orEmpty()
-    var status by remember { mutableStateOf(Status.read(ctx)) }
-    var enabled by remember { mutableStateOf(Prefs.enabled(ctx)) }
 
     val updatedAt = status?.optString("updated_at").orEmpty()
     val heartbeatAge =
@@ -148,26 +175,24 @@ fun CaptureScreen(nav: NavController) {
         // all about whether the microphone worked.
         Card {
             SectionLabel("Lake side")
-            val pending = Outbox.pendingCount(ctx)
-            val inboxAge = Inbox.ageSeconds(ctx, Inbox.GLANCE)
+            val uploadAt = latestUpload?.optString("ts").orEmpty()
+            val uploadTime = Stamps.parse(uploadAt)
+            val uploadAge = if (uploadTime > 0) (System.currentTimeMillis() - uploadTime) / 1000 else -1L
+            val blocked = latestBlock?.optString("kind") == "chunk_upload_blocked" &&
+                Stamps.parse(latestBlock?.optString("ts").orEmpty()) > uploadTime && (pendingAudio ?: 0) > 0
             GradeRow(
-                Grade.of(measured = inboxAge >= 0, healthy = inboxAge in 0..7200),
-                if (inboxAge < 0) "the drain has never reached this phone"
-                else "last drain contact ${OfferPolicy.stalenessOf(ctx, Inbox.GLANCE)}",
-                if (inboxAge < 0) "no inbox file has ever arrived"
-                else "inbox/glance.json is ${inboxAge}s old",
+                Grade.of(measured = (uploadAge in 0..7200 || blocked) && pendingAudio != null, healthy = !blocked && uploadAge in 0..7200),
+                when {
+                    blocked -> "audio upload is blocked"
+                    uploadTime > 0 -> "last verified audio upload $uploadAt"
+                    else -> "no verified audio upload receipt yet"
+                },
+                if (blocked) latestBlock?.optString("reason").orEmpty()
+                else "receipts confirm retained bytes; open recordings are not queued",
             )
-            StatRow("queued for the drain", pending.toString())
-            val dir = Storage.chunkDir(ctx)
-            StatRow("chunk directory", dir?.absolutePath ?: "none writable")
-            if (dir != null && dir.absolutePath != Storage.SHARED_DIR) {
-                Text(
-                    "This is app-private storage. Termux cannot read it, so nothing " +
-                        "here will ever drain — grant all-files access.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Palette.Broken,
-                )
-            }
+            StatRow("closed audio queued", pendingAudio?.toString() ?: "unavailable")
+            StatRow("outbox items queued", pendingOutbox?.toString() ?: "unavailable")
+            StatRow("chunk directory", chunkDirectory ?: "unavailable")
         }
 
         SelfAccounting()
@@ -240,6 +265,11 @@ fun CaptureScreen(nav: NavController) {
         }
     }
 }
+
+private data class TransferSnapshot(
+    val status: JSONObject?, val upload: JSONObject?, val control: JSONObject?,
+    val audio: Int?, val outbox: Int?, val directory: String?,
+)
 
 /**
  * What this app costs the phone.
