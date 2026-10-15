@@ -334,6 +334,18 @@ object HealthLane {
             // tick, so a healthy re-sweep reads zero -- and this number is
             // what says the gate is holding rather than the lane being dead.
             "known_records", HealthSeen.count(ctx),
+            // Tokens are opaque credentials. Export only local acquisition
+            // metadata; an older token without a timestamp remains unknown.
+            "tokens", org.json.JSONObject().also { states ->
+                for (type in TYPES) {
+                    val present = p.getString(tokenKey(type), null) != null
+                    val receivedAt = p.getLong(tokenReceivedAtKey(type), 0L)
+                    states.put(type.simpleName, org.json.JSONObject()
+                        .put("present", present)
+                        .put("received_at", if (present && receivedAt > 0L)
+                            Instant.ofEpochMilli(receivedAt).toString() else org.json.JSONObject.NULL))
+                }
+            },
         )
         return written
     }
@@ -347,6 +359,8 @@ object HealthLane {
 
     private fun sweptKey(type: KClass<out Record>) = "swept:$BACKFILL_GENERATION:${type.simpleName}"
     private fun tokenKey(type: KClass<out Record>) = "token:${type.simpleName}"
+    private fun tokenReceivedAtKey(type: KClass<out Record>) = "token_received_at:${type.simpleName}"
+    private fun resumeTokenReceivedAtKey(type: KClass<out Record>) = "sweep_token_received_at:$BACKFILL_GENERATION:${type.simpleName}"
     private fun resumePageKey(type: KClass<out Record>) = "sweep_page:$BACKFILL_GENERATION:${type.simpleName}"
     private fun resumeTokenKey(type: KClass<out Record>) = "sweep_token:$BACKFILL_GENERATION:${type.simpleName}"
     private fun resumeCountKey(type: KClass<out Record>) = "sweep_count:$BACKFILL_GENERATION:${type.simpleName}"
@@ -390,7 +404,8 @@ object HealthLane {
                         "reason", "token ${type.simpleName}: ${e.message}")
                     return 0
                 }
-            p.edit().putString(resumeTokenKey(type), token).commit()
+            p.edit().putString(resumeTokenKey(type), token)
+                .putLong(resumeTokenReceivedAtKey(type), System.currentTimeMillis()).commit()
         }
         // No lower bound. `before` asks for everything up to now, so the window
         // is whatever Health Connect still retains rather than a number we
@@ -426,6 +441,8 @@ object HealthLane {
             return written
         }
         p.edit().putString(tokenKey(type), token).putBoolean(sweptKey(type), true)
+            .putLong(tokenReceivedAtKey(type), p.getLong(resumeTokenReceivedAtKey(type), 0L))
+            .remove(resumeTokenReceivedAtKey(type))
             .remove(resumePageKey(type)).remove(resumeTokenKey(type))
             .remove(resumeCountKey(type)).remove(resumePagesKey(type)).commit()
         Events.record(ctx, "health_backfill", "type", type.simpleName, "records", written,
@@ -437,6 +454,8 @@ object HealthLane {
     private suspend fun incremental(ctx: Context, client: HealthConnectClient, type: KClass<out Record>): Int {
         var token = prefs(ctx).getString(tokenKey(type), null)
             ?: return sweep(ctx, client, type)
+        val previousToken = token
+        var tokenReceivedAt: Long? = null
         var written = 0
         while (true) {
             val response =
@@ -447,12 +466,13 @@ object HealthLane {
                     Log.w(Storage.TAG, "health: ${type.simpleName} changes unreadable", e)
                     return written
                 }
+            val responseReceivedAt = System.currentTimeMillis()
             if (response.changesTokenExpired) {
                 // Health Connect drops tokens after ~30 days of not being
                 // asked. Falling back to a window sweep is the documented
                 // recovery and re-establishes a token in the same pass.
                 Events.record(ctx, "health_token_expired", "type", type.simpleName, "action", "sweep")
-                prefs(ctx).edit().remove(tokenKey(type)).remove(sweptKey(type)).commit()
+                prefs(ctx).edit().remove(tokenKey(type)).remove(tokenReceivedAtKey(type)).remove(sweptKey(type)).commit()
                 return written + sweep(ctx, client, type)
             }
             response.changes.forEach { change ->
@@ -473,13 +493,22 @@ object HealthLane {
                     else -> Unit
                 }
             }
+            if (response.nextChangesToken != token) {
+                tokenReceivedAt = responseReceivedAt
+            }
             token = response.nextChangesToken
             if (!response.hasMore) break
         }
         // Only now, and only because every page above was read without
         // throwing. A token advanced past unread changes is data loss with no
         // symptom.
-        prefs(ctx).edit().putString(tokenKey(type), token).commit()
+        val update = prefs(ctx).edit().putString(tokenKey(type), token)
+        // A provider may return the same token. Reading it again does not
+        // establish a new acquisition time, especially for legacy tokens.
+        if (token != previousToken && tokenReceivedAt != null) {
+            update.putLong(tokenReceivedAtKey(type), tokenReceivedAt)
+        }
+        update.commit()
         return written
     }
 
