@@ -84,6 +84,8 @@ let
     nativeBuildInputs = [
       gradle
       jdk
+      pkgs.python3
+      pkgs.procps
     ];
 
     # Google's Maven/Play SDK indexes change independently of pinned artifacts.
@@ -178,6 +180,7 @@ let
     doCheck = true;
     checkPhase = ''
       runHook preCheck
+      python3 tools/test-transport-guard.py
       mkdir -p integrity-test
       javac -encoding UTF-8 -d integrity-test app/src/main/java/dev/sinnix/phone/core/*.java app/src/main/java/dev/sinnix/phone/capture/*.java app/src/main/java/dev/sinnix/phone/sync/*.java app/src/main/java/dev/sinnix/phone/prime/*.java tools/*Test.java
       java -cp integrity-test EventLogReaderTest
