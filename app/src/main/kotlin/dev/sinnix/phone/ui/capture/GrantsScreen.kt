@@ -18,6 +18,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -34,6 +38,8 @@ import dev.sinnix.phone.ui.GradeRow
 import dev.sinnix.phone.ui.SectionLabel
 import dev.sinnix.phone.ui.VerbButton
 import dev.sinnix.phone.ui.theme.Palette
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
@@ -59,7 +65,10 @@ fun GrantsScreen(nav: NavController) {
     val battery = remember { batteryExempt(ctx) }
     val mic = remember { micGranted(ctx) }
     val listener = remember { listenerEnabled(ctx) }
-    val bootInference = remember { bootInference(ctx) }
+    var bootEvidence by remember { mutableStateOf("Reading boot history…") }
+    LaunchedEffect(Unit) {
+        bootEvidence = withContext(Dispatchers.IO) { bootInference(ctx) }
+    }
     val attestedAt = remember { Prefs.autostartAttestedAt(ctx) }
 
     Column(
@@ -126,7 +135,7 @@ fun GrantsScreen(nav: NavController) {
                         else "attested ${Stamps.iso(attestedAt).dropLast(1).replace('T', ' ')}"
                     )
                     append(" · ")
-                    append(bootInference)
+                    append(bootEvidence)
                 },
             )
             Text(
@@ -191,7 +200,7 @@ private fun probeStorage(ctx: Context): Pair<Boolean, String> {
  * after it is evidence it is not. Neither is proof, and the wording says so.
  */
 private fun bootInference(ctx: Context): String {
-    val events = Events.recent(ctx, 7)
+    val events = Events.recentOfKind(ctx, 7, "boot", "chunk_closed")
     val lastBoot =
         events.filter { it.optString("kind") == "boot" }.maxByOrNull {
             Stamps.parse(it.optString("ts"))

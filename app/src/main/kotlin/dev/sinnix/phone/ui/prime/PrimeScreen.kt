@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import dev.sinnix.phone.AppGraph
+import dev.sinnix.phone.prime.Path
 import dev.sinnix.phone.core.Prefs
 import dev.sinnix.phone.ui.Card
 import dev.sinnix.phone.ui.SectionLabel
@@ -161,8 +162,10 @@ fun PrimeScreen(nav: NavController) {
                                     scope.launch {
                                         val path = transport.answerJob(id, text)
                                         lastAction = path.label
-                                        answering = null
-                                        answer = ""
+                                        if (path != Path.FAILED && path != Path.UNSAVED) {
+                                            answering = null
+                                            answer = ""
+                                        }
                                     }
                                 }
                                 VerbButton("Speak", Modifier.weight(1f)) {

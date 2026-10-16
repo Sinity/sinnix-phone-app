@@ -13,6 +13,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -29,8 +30,6 @@ import dev.sinnix.phone.core.Events
 import dev.sinnix.phone.core.Prefs
 import dev.sinnix.phone.core.Stamps
 import dev.sinnix.phone.core.Storage
-import dev.sinnix.phone.instruments.OfferPolicy
-import dev.sinnix.phone.sync.Inbox
 import dev.sinnix.phone.sync.Outbox
 import dev.sinnix.phone.ui.Card
 import dev.sinnix.phone.ui.GradeRow
@@ -39,6 +38,11 @@ import dev.sinnix.phone.ui.SectionLabel
 import dev.sinnix.phone.ui.StatRow
 import dev.sinnix.phone.ui.VerbButton
 import dev.sinnix.phone.ui.theme.Palette
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.util.Date
 
 /**
@@ -64,9 +68,46 @@ import java.util.Date
 @Composable
 fun CaptureScreen(nav: NavController) {
     val ctx = LocalContext.current
-    var coverage by remember { mutableStateOf(Coverage.of(ctx, System.currentTimeMillis())) }
-    var status by remember { mutableStateOf(Status.read(ctx)) }
+    var coverage by remember { mutableStateOf<Coverage?>(null) }
+    var recentChunks by remember { mutableStateOf<List<JSONObject>?>(null) }
+    var status by remember { mutableStateOf<JSONObject?>(null) }
+    var latestUpload by remember { mutableStateOf<JSONObject?>(null) }
+    var latestBlock by remember { mutableStateOf<JSONObject?>(null) }
+    var pendingAudio by remember { mutableStateOf<Int?>(null) }
+    var pendingSpool by remember { mutableStateOf<Int?>(null) }
+    var pendingOutbox by remember { mutableStateOf<Int?>(null) }
+    var chunkDirectory by remember { mutableStateOf<String?>(null) }
     var enabled by remember { mutableStateOf(Prefs.enabled(ctx)) }
+    LaunchedEffect(Unit) {
+        coverage = withContext(Dispatchers.IO) { Coverage.of(ctx, System.currentTimeMillis()) }
+        recentChunks = withContext(Dispatchers.IO) { Events.recentOfKind(ctx, 2, "chunk_closed").takeLast(12).reversed() }
+        while (isActive) {
+            val snapshot = withContext(Dispatchers.IO) {
+                val transfers = Events.recentOfKind(ctx, 2, "chunk_uploaded", "chunk_upload_undeletable", "chunk_upload_blocked", "chunk_upload_ready")
+                val dir = Storage.chunkDir(ctx)
+                val entries = dir?.listFiles()
+                val candidates = entries?.filter { it.name.endsWith(".m4a") || it.name.endsWith(".m4a.orphan") }
+                TransferSnapshot(
+                    Status.read(ctx),
+                    transfers.lastOrNull { it.optString("kind") in setOf("chunk_uploaded", "chunk_upload_undeletable") },
+                    transfers.lastOrNull { it.optString("kind") in setOf("chunk_upload_blocked", "chunk_upload_ready") },
+                    candidates?.takeIf { files -> files.all { it.isFile } }?.size,
+                    Storage.recordingDir(ctx)?.listFiles()?.filter { it.name.endsWith(".m4a") || it.name.endsWith(".orphan") }
+                        ?.takeIf { files -> files.all { it.isFile } }?.size,
+                    Outbox.pendingCount(ctx), dir?.absolutePath,
+                )
+            }
+            status = snapshot.status
+            latestUpload = snapshot.upload
+            latestBlock = snapshot.control
+            pendingAudio = snapshot.audio
+            pendingSpool = snapshot.spool
+            pendingOutbox = snapshot.outbox
+            chunkDirectory = snapshot.directory
+            delay(20_000)
+        }
+    }
+    val holes = coverage?.holes.orEmpty()
 
     val updatedAt = status?.optString("updated_at").orEmpty()
     val heartbeatAge =
@@ -84,13 +125,14 @@ fun CaptureScreen(nav: NavController) {
     ) {
         Card {
             SectionLabel("Phone side · 7 days")
-            RibbonView(coverage)
-            Text(
-                "unbroken ${coverage.unbrokenHours()}h · " +
-                    "${coverage.coveredHours()} of ${coverage.knownHours()} known hours",
-                style = MaterialTheme.typography.labelSmall,
-                color = Palette.TextDim,
-            )
+            coverage?.let { c ->
+                RibbonView(c)
+                Text(
+                    "unbroken ${c.unbrokenHours()}h · ${c.coveredHours()} of ${c.knownHours()} known hours",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Palette.TextDim,
+                )
+            } ?: Text("Reading capture history…", color = Palette.TextDim)
         }
 
         Card {
@@ -137,34 +179,33 @@ fun CaptureScreen(nav: NavController) {
         // all about whether the microphone worked.
         Card {
             SectionLabel("Lake side")
-            val pending = Outbox.pendingCount(ctx)
-            val inboxAge = Inbox.ageSeconds(ctx, Inbox.GLANCE)
+            val uploadAt = latestUpload?.optString("ts").orEmpty()
+            val uploadTime = Stamps.parse(uploadAt)
+            val uploadAge = if (uploadTime > 0) (System.currentTimeMillis() - uploadTime) / 1000 else -1L
+            val blocked = latestBlock?.optString("kind") == "chunk_upload_blocked" &&
+                Stamps.parse(latestBlock?.optString("ts").orEmpty()).let { it > 0 && it >= uploadTime } && (pendingAudio ?: 0) > 0
             GradeRow(
-                Grade.of(measured = inboxAge >= 0, healthy = inboxAge in 0..7200),
-                if (inboxAge < 0) "the drain has never reached this phone"
-                else "last drain contact ${OfferPolicy.stalenessOf(ctx, Inbox.GLANCE)}",
-                if (inboxAge < 0) "no inbox file has ever arrived"
-                else "inbox/glance.json is ${inboxAge}s old",
+                Grade.of(measured = (uploadAge in 0..7200 || blocked) && pendingAudio != null && pendingSpool != null, healthy = !blocked && uploadAge in 0..7200),
+                when {
+                    blocked -> "audio upload is blocked"
+                    uploadTime > 0 -> "last verified audio upload $uploadAt"
+                    else -> "no recent verified audio upload receipt"
+                },
+                if (blocked) latestBlock?.optString("reason").orEmpty()
+                else "receipts confirm retained bytes; open recordings are not queued",
             )
-            StatRow("queued for the drain", pending.toString())
-            val dir = Storage.chunkDir(ctx)
-            StatRow("chunk directory", dir?.absolutePath ?: "none writable")
-            if (dir != null && dir.absolutePath != Storage.SHARED_DIR) {
-                Text(
-                    "This is app-private storage. Termux cannot read it, so nothing " +
-                        "here will ever drain — grant all-files access.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Palette.Broken,
-                )
-            }
+            StatRow("closed audio queued", pendingAudio?.toString() ?: "unavailable")
+            StatRow("closed recorder files awaiting publication", pendingSpool?.toString() ?: "unavailable")
+            StatRow("outbox items queued", pendingOutbox?.toString() ?: "unavailable")
+            StatRow("chunk directory", chunkDirectory ?: "unavailable")
         }
 
         SelfAccounting()
 
-        if (coverage.holes.isNotEmpty()) {
+        if (holes.isNotEmpty()) {
             Card {
                 SectionLabel("Holes")
-                coverage.holes.takeLast(8).reversed().forEach { hole ->
+                holes.takeLast(8).reversed().forEach { hole ->
                     Column(Modifier.padding(vertical = 6.dp)) {
                         Text(
                             "${Stamps.iso(hole.startMs).drop(5).dropLast(4)} · ${hole.hours}h",
@@ -183,7 +224,8 @@ fun CaptureScreen(nav: NavController) {
 
         Card {
             SectionLabel("Recent chunks")
-            Events.recentOfKind(ctx, 2, "chunk_closed").takeLast(12).reversed().forEach { e ->
+            if (recentChunks == null) Text("Reading recent chunks…", color = Palette.TextDim)
+            recentChunks.orEmpty().forEach { e ->
                 val silent = e.optBoolean("captured_nothing", false)
                 GradeRow(
                     if (silent) Grade.BROKEN else Grade.EVIDENCED,
@@ -228,6 +270,11 @@ fun CaptureScreen(nav: NavController) {
         }
     }
 }
+
+private data class TransferSnapshot(
+    val status: JSONObject?, val upload: JSONObject?, val control: JSONObject?,
+    val audio: Int?, val spool: Int?, val outbox: Int?, val directory: String?,
+)
 
 /**
  * What this app costs the phone.

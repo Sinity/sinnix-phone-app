@@ -5,6 +5,7 @@ import android.util.Log
 import dev.sinnix.phone.core.Events
 import dev.sinnix.phone.core.Storage
 import dev.sinnix.phone.prime.HubClient
+import dev.sinnix.phone.prime.IntentReplyPolicy
 import java.io.File
 import org.json.JSONObject
 
@@ -24,8 +25,9 @@ import org.json.JSONObject
  * - `intent-*.json` is a request, and goes to /intent, which EXECUTES it. The
  *   same route [dev.sinnix.phone.prime.Transport] posts to when it is live,
  *   with the same object and the same `send_token` -- so an intent that went
- *   out live and was queued anyway executes once and still gets its receipt.
- *   That is the token's entire job and the reason this can be dumb.
+ *   out live and was queued anyway shares the host's serialized execution
+ *   slot. Completed outcomes acknowledge; failed outcomes retain the retry;
+ *   partial or uncertain outcomes are parked for review.
  * - blobs (a voice note, a PPG trace, a shared file) and their `.json`
  *   sidecars are data, and go to /chunk on the `outbox` lane, which is the
  *   directory in the lake `sinnix-score` reads traces out of.
@@ -90,21 +92,30 @@ class OutboxUploader(context: Context) {
                 continue
             }
             val answer = client.postIntent(parsed) ?: return note("unreachable")
-            if (answer.optBoolean("ok", false) || answer.optBoolean("duplicate", false)) {
-                intent.delete()
+            val decision = IntentReplyPolicy.decide(
+                answer.opt("ok"), answer.opt("outcome"), answer.opt("kind"), parsed.optString("kind"),
+            )
+            if (decision == IntentReplyPolicy.Decision.COMPLETED) {
+                if (!intent.delete()) return note("completed intent could not be removed")
                 Events.record(
                     ctx, "intent_delivered",
                     "intent_kind", parsed.optString("kind"),
                     "send_token", parsed.optString("send_token"),
                     "duplicate", answer.optBoolean("duplicate", false),
                 )
+            } else if (decision == IntentReplyPolicy.Decision.RETRY) {
+                // This is a definitive failure, not an uncertain effect. Keep
+                // the same token and content for a later pass without blocking
+                // other queued requests.
+                Events.record(
+                    ctx, "intent_retry_pending",
+                    "intent_kind", parsed.optString("kind"),
+                    "send_token", parsed.optString("send_token"),
+                    "detail", answer.optString("detail").take(200),
+                )
             } else {
-                // Prime answered and said no -- an unknown kind, a steer that
-                // failed. Retrying cannot fix that, and this pass runs every
-                // twenty seconds, so a refused intent left in place would be
-                // re-posted forever and would hold up everything queued behind
-                // it. Set aside rather than deleted: the operator asked for
-                // this, and the file is the evidence of what was asked.
+                // Partial and uncertain effects cannot be blindly replayed.
+                // Preserve the exact request outside the automatic queue.
                 val detail = answer.optString("detail").take(200)
                 if (intent.renameTo(File(intent.parentFile, intent.name + ".rejected"))) {
                     Events.record(
@@ -112,6 +123,7 @@ class OutboxUploader(context: Context) {
                         "intent_kind", parsed.optString("kind"),
                         "send_token", parsed.optString("send_token"),
                         "detail", detail,
+                        "outcome", answer.optString("outcome"),
                     )
                 } else {
                     return note("prime refused an intent that will not move aside: $detail")

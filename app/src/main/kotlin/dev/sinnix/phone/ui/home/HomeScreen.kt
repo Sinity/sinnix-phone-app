@@ -26,6 +26,7 @@ import androidx.navigation.NavController
 import dev.sinnix.phone.AppGraph
 import dev.sinnix.phone.capture.Coverage
 import dev.sinnix.phone.core.Prefs
+import dev.sinnix.phone.instruments.Ask
 import dev.sinnix.phone.instruments.OfferPolicy
 import dev.sinnix.phone.sync.Outbox
 import dev.sinnix.phone.ui.Card
@@ -37,6 +38,8 @@ import dev.sinnix.phone.ui.instrument.InstrumentActivity
 import dev.sinnix.phone.ui.mark.MarkActivity
 import dev.sinnix.phone.ui.talk.TalkActivity
 import dev.sinnix.phone.ui.theme.Palette
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 /**
@@ -64,7 +67,7 @@ fun HomeScreen(nav: NavController) {
     var pending by remember { mutableStateOf(0) }
 
     LaunchedEffect(Unit) {
-        coverage = Coverage.of(ctx, System.currentTimeMillis())
+        coverage = withContext(Dispatchers.IO) { Coverage.of(ctx, System.currentTimeMillis()) }
         pending = Outbox.pendingCount(ctx)
         val (g, live) = transport.glance()
         glance = g
@@ -194,7 +197,10 @@ private fun AskCard(
     nav: NavController,
     glance: JSONObject?,
 ) {
-    val question = remember(glance) { OfferPolicy.currentAsk(ctx, glance) }
+    var question by remember(glance) { mutableStateOf(Ask("Reading current ask…")) }
+    LaunchedEffect(glance) {
+        question = withContext(Dispatchers.IO) { OfferPolicy.currentAsk(ctx, glance) }
+    }
     Card(onClick = { question.route?.let { nav.navigate(it) } }) {
         SectionLabel("Asking")
         Text(question.title, style = MaterialTheme.typography.headlineSmall, color = Palette.Text)

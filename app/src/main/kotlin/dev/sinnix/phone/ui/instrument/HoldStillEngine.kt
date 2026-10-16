@@ -34,6 +34,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import dev.sinnix.phone.core.Stamps
 import dev.sinnix.phone.instruments.Instrument
+import dev.sinnix.phone.instruments.Outcome
 import dev.sinnix.phone.instruments.RunRecord
 import dev.sinnix.phone.sync.Outbox
 import dev.sinnix.phone.ui.HoldRing
@@ -60,7 +61,11 @@ import org.json.JSONObject
  * variability is the camera's jitter.
  */
 @Composable
-fun HoldStillEngine(instrument: Instrument, onDone: (Outcome) -> Unit) {
+fun HoldStillEngine(
+    instrument: Instrument,
+    preflightUnmet: List<String> = emptyList(),
+    onDone: (Outcome) -> Unit,
+) {
     val ctx = LocalContext.current
     val startedAt = remember { System.currentTimeMillis() }
     val durationMs = (instrument.config["duration_ms"] as? Int) ?: 30_000
@@ -89,11 +94,28 @@ fun HoldStillEngine(instrument: Instrument, onDone: (Outcome) -> Unit) {
         }
         collector.stop()
         if (failure != null) {
-            RunRecord.write(ctx, instrument, startedAt, mapOf("failed" to failure))
-            onDone(Outcome("", null, "", true, emptyMap(), failure ?: "failed"))
+            val outcome = Outcome("", null, "", true, emptyMap(), failure ?: "failed")
+            RunRecord.write(
+                ctx,
+                instrument,
+                startedAt,
+                mapOf("failed" to failure),
+                outcome = outcome,
+                preflightUnmet = preflightUnmet,
+            )
+            onDone(outcome)
             return@LaunchedEffect
         }
         val blob = collector.flush(instrument)
+        val outcome =
+            Outcome(
+                primaryLabel = "",
+                primary = null,
+                primaryUnit = "",
+                lowerIsBetter = true,
+                fields = emptyMap(),
+                note = "${collector.count()} samples handed to prime",
+            )
         RunRecord.write(
             ctx,
             instrument,
@@ -104,17 +126,10 @@ fun HoldStillEngine(instrument: Instrument, onDone: (Outcome) -> Unit) {
                 "trace_file" to (blob?.name ?: JSONObject.NULL),
                 "duration_ms" to durationMs,
             ),
+            outcome = outcome,
+            preflightUnmet = preflightUnmet,
         )
-        onDone(
-            Outcome(
-                primaryLabel = "",
-                primary = null,
-                primaryUnit = "",
-                lowerIsBetter = true,
-                fields = emptyMap(),
-                note = "${collector.count()} samples handed to prime",
-            )
-        )
+        onDone(outcome)
     }
 
     Column(

@@ -26,6 +26,7 @@ import androidx.navigation.NavController
 import dev.sinnix.phone.AppGraph
 import dev.sinnix.phone.core.Events
 import dev.sinnix.phone.instruments.OfferPolicy
+import dev.sinnix.phone.prime.Path
 import dev.sinnix.phone.sync.Inbox
 import dev.sinnix.phone.ui.Card
 import dev.sinnix.phone.ui.SectionLabel
@@ -212,7 +213,6 @@ fun ResolveScreen(nav: NavController) {
                             if (resolved[id] == outcome) "✓ $outcome" else outcome,
                             Modifier.weight(1f),
                         ) {
-                            resolved[id] = outcome
                             scope.launch {
                                 val path =
                                     transport.send(
@@ -220,6 +220,7 @@ fun ResolveScreen(nav: NavController) {
                                         "id", id,
                                         "outcome", outcome,
                                     )
+                                if (path == Path.LIVE) resolved[id] = outcome
                                 note = "$id · ${path.label}"
                             }
                         }
@@ -252,6 +253,7 @@ fun ReadyQueueScreen(nav: NavController) {
 
     var steering by remember { mutableStateOf<JSONObject?>(null) }
     val handed = remember { mutableStateMapOf<String, String>() }
+    var note by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) { steering = transport.steering().first }
 
@@ -264,7 +266,7 @@ fun ReadyQueueScreen(nav: NavController) {
     ) {
         Card {
             Text(
-                if (remaining <= 0) "stack spent" else "$remaining in the stack",
+                "$remaining awaiting submission",
                 style = MaterialTheme.typography.displaySmall,
                 color = Palette.Text,
             )
@@ -293,10 +295,15 @@ fun ReadyQueueScreen(nav: NavController) {
                                 "id", id,
                                 "queue_token", item.optString("send_token"),
                             )
-                        handed[id] = path.label
+                        if (path != Path.FAILED && path != Path.UNSAVED) handed[id] = path.label
+                        note = "$id · ${path.label}"
                     }
                 }
             }
+        }
+
+        note?.let {
+            Card { Text(it, style = MaterialTheme.typography.labelMedium, color = Palette.TextDim) }
         }
 
         handed.forEach { (id, label) ->
@@ -307,7 +314,7 @@ fun ReadyQueueScreen(nav: NavController) {
                     color = Palette.TextDim,
                 )
                 Text(
-                    "prime confirms it as a notification",
+                    "Check the outcome above or prime's receipt.",
                     style = MaterialTheme.typography.labelSmall,
                     color = Palette.TextFaint,
                 )

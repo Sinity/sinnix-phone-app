@@ -102,7 +102,7 @@ object TransportGuard {
         try {
             val script =
                 "export PATH=$TERMUX_PREFIX/bin:\$PATH; " +
-                    "pgrep -f runsvdir >/dev/null 2>&1 || " +
+                    "pgrep -x runsvdir >/dev/null 2>&1 || " +
                     "nohup $TERMUX_PREFIX/bin/runsvdir -P $TERMUX_PREFIX/var/service >/dev/null 2>&1 & " +
                     "sleep 2; $TERMUX_PREFIX/bin/sv up $TERMUX_PREFIX/var/service/sshd"
             val intent = Intent(ACTION_RUN_COMMAND).apply {

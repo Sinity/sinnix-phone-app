@@ -24,7 +24,11 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.core.content.ContextCompat
@@ -50,6 +54,8 @@ import dev.sinnix.phone.ui.steering.RitualScreen
 import dev.sinnix.phone.ui.theme.Palette
 import dev.sinnix.phone.ui.theme.SinnixTheme
 
+private data class RouteRequest(val sequence: Int, val route: String?)
+
 /**
  * The one Activity.
  *
@@ -60,6 +66,8 @@ import dev.sinnix.phone.ui.theme.SinnixTheme
  */
 class MainActivity : ComponentActivity() {
 
+    private var routeRequest by mutableStateOf(RouteRequest(0, null))
+
     private val requestNotifications =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             Events.record(this, "grant_transition", "grant", "POST_NOTIFICATIONS", "granted", granted)
@@ -67,6 +75,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        routeRequest = RouteRequest(0, intent?.getStringExtra("route"))
         Notifications.ensureChannels(this)
         askForNotificationsOnce()
         // Decks registered here rather than as a side effect of visiting the
@@ -78,7 +87,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             SinnixTheme {
                 Box(Modifier.fillMaxSize().background(Palette.Background)) {
-                    AppScaffold(startRoute = intent?.getStringExtra("route"))
+                    AppScaffold(routeRequest)
                 }
             }
         }
@@ -87,6 +96,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        routeRequest = RouteRequest(routeRequest.sequence + 1, intent.getStringExtra("route"))
     }
 
     /**
@@ -162,10 +172,21 @@ private enum class Destination(
 }
 
 @Composable
-private fun AppScaffold(startRoute: String?) {
+private fun AppScaffold(request: RouteRequest) {
+    val initialRoute = rememberSaveable { requestedRoute(request.route) ?: Destination.HOME.route }
     val nav = rememberNavController()
     val backStack by nav.currentBackStackEntryAsState()
     val current = backStack?.destination?.route
+
+    // singleTop delivers notification and tile requests to this existing Activity.
+    // A sequence also handles requesting the same route after manual navigation.
+    LaunchedEffect(request.sequence) {
+        if (request.sequence > 0) {
+            requestedRoute(request.route)?.let { route ->
+                nav.navigate(route) { launchSingleTop = true }
+            }
+        }
+    }
 
     Scaffold(
         containerColor = Palette.Background,
@@ -198,8 +219,7 @@ private fun AppScaffold(startRoute: String?) {
     ) { padding ->
         NavHost(
             navController = nav,
-            startDestination = startRoute?.takeIf { r -> Destination.entries.any { it.route == r } }
-                ?: Destination.HOME.route,
+            startDestination = initialRoute,
             modifier = Modifier.padding(padding),
         ) {
             composable(Destination.HOME.route) { HomeScreen(nav) }
@@ -215,3 +235,9 @@ private fun AppScaffold(startRoute: String?) {
         }
     }
 }
+
+private fun requestedRoute(route: String?): String? =
+    route?.takeIf { candidate ->
+        Destination.entries.any { it.route == candidate } ||
+            candidate in setOf("grants", "settings", "sleep", "ritual", "resolve", "ready")
+    }
