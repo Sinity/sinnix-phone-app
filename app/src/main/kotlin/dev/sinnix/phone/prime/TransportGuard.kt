@@ -8,6 +8,7 @@ import android.util.Log
 import dev.sinnix.phone.core.Events
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Keeps prime's way in open.
@@ -78,15 +79,26 @@ object TransportGuard {
      * is alive, and answering that must not depend on the VPN, which is one of
      * the things being diagnosed.
      */
-    private fun probeLocal(port: Int): Boolean =
-        try {
-            Socket().use {
-                it.connect(InetSocketAddress("127.0.0.1", port), PROBE_TIMEOUT_MILLIS)
-                true
+    private fun probeLocal(port: Int): Boolean {
+        // The watchdog alarm delivers tick() on the main thread, where Android
+        // refuses socket I/O (NetworkOnMainThreadException). Probing inline
+        // therefore reported sshd down on every sweep since at least 09-20,
+        // and each false "down" launched a repair. Probe on a worker instead.
+        val up = AtomicBoolean(false)
+        val worker = Thread {
+            try {
+                Socket().use {
+                    it.connect(InetSocketAddress("127.0.0.1", port), PROBE_TIMEOUT_MILLIS)
+                    up.set(true)
+                }
+            } catch (e: Exception) {
+                Log.i(TAG, "loopback probe of $port failed: ${e.javaClass.simpleName}")
             }
-        } catch (e: Exception) {
-            false
         }
+        worker.start()
+        worker.join(PROBE_TIMEOUT_MILLIS + 500L)
+        return up.get()
+    }
 
     /**
      * Ask Termux to bring its supervisor and sshd back up.
@@ -100,8 +112,12 @@ object TransportGuard {
      */
     private fun startSshd(ctx: Context): Boolean =
         try {
+            // SVDIR and LOGDIR are what Termux's own service start exports;
+            // without them every svlogd child exits and runit restarts it
+            // about once a second (seen 2026-10-27 for sshd/log, ssh-agent/log).
             val script =
-                "export PATH=$TERMUX_PREFIX/bin:\$PATH; " +
+                "export PATH=$TERMUX_PREFIX/bin:\$PATH " +
+                    "SVDIR=$TERMUX_PREFIX/var/service LOGDIR=$TERMUX_PREFIX/var/log; " +
                     "pgrep -x runsvdir >/dev/null 2>&1 || " +
                     "nohup $TERMUX_PREFIX/bin/runsvdir -P $TERMUX_PREFIX/var/service >/dev/null 2>&1 & " +
                     "sleep 2; $TERMUX_PREFIX/bin/sv up $TERMUX_PREFIX/var/service/sshd"
