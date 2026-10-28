@@ -50,7 +50,6 @@ class DeviceSignals(context: Context) {
             val action = intent.action ?: return
             observe(action) {
                 when (action) {
-                    Intent.ACTION_USER_PRESENT -> Events.record(ctx, "user_present", "action", action)
                     AudioManager.RINGER_MODE_CHANGED_ACTION -> ringer(action)
                     NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED -> dnd(action)
                     PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED -> idle(action)
@@ -72,7 +71,6 @@ class DeviceSignals(context: Context) {
 
     fun start() {
         val filter = IntentFilter().apply {
-            addAction(Intent.ACTION_USER_PRESENT)
             addAction(AudioManager.RINGER_MODE_CHANGED_ACTION)
             addAction(NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED)
             addAction(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED)

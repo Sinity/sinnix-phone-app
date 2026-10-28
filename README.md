@@ -20,8 +20,8 @@ The ambient service records `wifi_state` (including SSID when location access
 and device location are enabled), `bluetooth_state`, `call_state`,
 `network_type`, `headset_plug`, `airplane_mode`, `ringer_mode`, `dnd_filter`,
 and `device_idle`. `reason: snapshot` marks initial state; callbacks carry
-the broadcast action or callback reason. `user_present` is emitted only for
-an actual unlock broadcast. While capture is running, package broadcasts emit `package_added` and
+the broadcast action or callback reason. The existing `UsageLane` collector
+emits `user_present` for actual unlock broadcasts. While capture is running, package broadcasts emit `package_added` and
 `package_removed`, including the `replacing` flag for upgrades.
 
 The notification listener also observes active MediaSessions. `media_session`
