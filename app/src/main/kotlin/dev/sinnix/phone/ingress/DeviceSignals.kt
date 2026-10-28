@@ -11,7 +11,6 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.net.wifi.WifiManager
 import android.os.PowerManager
-import android.os.Build
 import android.provider.Settings
 import android.telephony.PhoneStateListener
 import android.telephony.ServiceState
@@ -54,8 +53,7 @@ class DeviceSignals(context: Context) {
                     Intent.ACTION_USER_PRESENT -> Events.record(ctx, "user_present", "action", action)
                     AudioManager.RINGER_MODE_CHANGED_ACTION -> ringer(action)
                     NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED -> dnd(action)
-                    PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED,
-                    PowerManager.ACTION_LIGHT_DEVICE_IDLE_MODE_CHANGED -> idle(action)
+                    PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED -> idle(action)
                     WifiManager.WIFI_STATE_CHANGED_ACTION,
                     WifiManager.NETWORK_STATE_CHANGED_ACTION -> wifi(action)
                     BluetoothAdapter.ACTION_STATE_CHANGED -> Events.record(ctx, "bluetooth_state",
@@ -78,7 +76,6 @@ class DeviceSignals(context: Context) {
             addAction(AudioManager.RINGER_MODE_CHANGED_ACTION)
             addAction(NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED)
             addAction(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED)
-            addAction(PowerManager.ACTION_LIGHT_DEVICE_IDLE_MODE_CHANGED)
             addAction(WifiManager.WIFI_STATE_CHANGED_ACTION)
             addAction(WifiManager.NETWORK_STATE_CHANGED_ACTION)
             addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
@@ -146,7 +143,7 @@ class DeviceSignals(context: Context) {
     }
     private fun idle(reason: String) {
         val pm = ctx.getSystemService(PowerManager::class.java)
-        Events.record(ctx, "device_idle", "idle", pm.isDeviceIdleMode, "light_idle", if (Build.VERSION.SDK_INT >= 33) pm.isLightDeviceIdleMode else null, "reason", reason)
+        Events.record(ctx, "device_idle", "idle", pm.isDeviceIdleMode, "reason", reason)
     }
     private fun wifi(reason: String) {
         val wm = ctx.getSystemService(WifiManager::class.java)
