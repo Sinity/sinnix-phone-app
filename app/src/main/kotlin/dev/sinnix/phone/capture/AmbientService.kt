@@ -64,6 +64,7 @@ class AmbientService : Service() {
     private var sensors: AmbientSensors? = null
     private var inbox: InboxWatcher? = null
     private var passive: PassiveLanes? = null
+    private var deviceSignals: dev.sinnix.phone.ingress.DeviceSignals? = null
     private var heartRate: HeartRateLane? = null
     private var usage: UsageLane? = null
     // The one transport plane, in four lanes: the event log, the outbox
@@ -102,6 +103,7 @@ class AmbientService : Service() {
         sensors = AmbientSensors(this).also { it.start() }
         inbox = InboxWatcher(this).also { it.start() }
         passive = PassiveLanes(this)
+        deviceSignals = dev.sinnix.phone.ingress.DeviceSignals(this).also { it.start() }
         heartRate = HeartRateLane(this)
         usage = UsageLane(this)
         eventUploader = dev.sinnix.phone.sync.EventUploader(this)
@@ -171,6 +173,7 @@ class AmbientService : Service() {
             status.serviceStopped()
             chunkPublisher?.stop()
         }
+        deviceSignals?.stop()
         sensors?.stop()
         inbox?.stop()
         heartRate?.stop()

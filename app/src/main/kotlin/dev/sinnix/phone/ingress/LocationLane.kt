@@ -19,8 +19,8 @@ import kotlin.math.roundToInt
  *
  * This is the covariate that makes everything else joinable to a place. A
  * reaction time is a number; a reaction time with "at the desk" or "on a
- * train" attached is an observation. Marks, instrument runs and EMA answers
- * all already carry light and motion for the same reason — location is the
+ * train" attached is an observation. Marks and instrument runs
+ * already carry light and motion for the same reason — location is the
  * third leg, and the one nothing else in the estate can produce.
  *
  * **`LocationManager`, not Play Services.** Android 12 promoted the fused

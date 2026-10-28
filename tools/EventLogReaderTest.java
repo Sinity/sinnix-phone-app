@@ -19,6 +19,13 @@ public final class EventLogReaderTest {
         try {
             Files.writeString(file.toPath(), "{\"text\":\"zażółć 水\"}\r\n\n{\"kind\":\"last\"}", StandardCharsets.UTF_8);
             equal(read(file, 4096, 1024), List.of("{\"text\":\"zażółć 水\"}", "{\"kind\":\"last\"}"));
+            // Retired and future event kinds remain in the historical stream.
+            List<String> history = List.of(
+                "{\"kind\":\"ema_prompted\",\"ts\":\"2026-01-01T12:00:00Z\"}",
+                "{\"kind\":\"ema_answer\",\"answer\":\"synthetic fixture\"}",
+                "{\"kind\":\"future_signal\",\"value\":1}");
+            Files.writeString(file.toPath(), String.join("\n", history) + "\n");
+            equal(read(file, 4096, 1024), history);
             Files.writeString(file.toPath(), "old\nkept\nlast\n");
             equal(read(file, 10, 1024), List.of("kept", "last")); // exact boundary
             equal(read(file, 8, 1024), List.of("last")); // mid-line boundary

@@ -15,8 +15,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -43,7 +41,7 @@ import dev.sinnix.phone.ui.theme.Palette
  * The knobs, in one place, with their costs stated.
  *
  * Until now every one of these existed in `Prefs` with no way to reach it: the
- * hub address, the EMA cadence, the alarm, the lanes. A preference nothing
+ * hub address, the alarm, the lanes. A preference nothing
  * writes is a preference that does not exist, and four of them had accumulated.
  *
  * Each lane says what it costs rather than just what it is. "Location" tells
@@ -58,7 +56,6 @@ fun SettingsScreen(nav: NavController) {
     var health by remember { mutableStateOf(Prefs.healthLane(ctx)) }
     var sleepDetect by remember { mutableStateOf(Prefs.sleepDetect(ctx)) }
     var power by remember { mutableStateOf(Prefs.powerLane(ctx)) }
-    var emaPerDay by remember { mutableStateOf(Prefs.emaPerDay(ctx).toFloat()) }
     var hub by remember { mutableStateOf(Prefs.hubBaseUrl(ctx)) }
 
     val askLocation =
@@ -148,34 +145,6 @@ fun SettingsScreen(nav: NavController) {
                 power = on
                 Prefs.setPowerLane(ctx, on)
             }
-        }
-
-        Card {
-            SectionLabel("Check-ins")
-            Text(
-                "${emaPerDay.toInt()} a day",
-                style = MaterialTheme.typography.titleMedium,
-                color = Palette.Text,
-            )
-            Slider(
-                value = emaPerDay,
-                onValueChange = { emaPerDay = it },
-                onValueChangeFinished = { Prefs.setEmaPerDay(ctx, emaPerDay.toInt()) },
-                valueRange = 0f..8f,
-                steps = 7,
-                colors =
-                    SliderDefaults.colors(
-                        thumbColor = Palette.Accent,
-                        activeTrackColor = Palette.AccentDim,
-                    ),
-            )
-            Text(
-                "Jittered across waking hours, answerable from the shade. More " +
-                    "samples is what makes this a method rather than a diary; fewer " +
-                    "is what makes it get answered. Zero turns it off.",
-                style = MaterialTheme.typography.bodySmall,
-                color = Palette.TextDim,
-            )
         }
 
         Card {

@@ -16,7 +16,6 @@ object Prefs {
     private const val KEY_ENABLED = "capture_enabled"
     private const val KEY_ENERGY = "energy_state"
     private const val KEY_HUB = "hub_base_url"
-    private const val KEY_EMA_PER_DAY = "ema_per_day"
     private const val KEY_LISTENER_ACK = "notification_listener_acknowledged"
     private const val KEY_AUTOSTART_ATTESTED_AT = "miui_autostart_attested_at"
     private const val KEY_LOCATION = "location_lane_enabled"
@@ -66,17 +65,6 @@ object Prefs {
 
     fun setHubBaseUrl(ctx: Context, value: String) =
         prefs(ctx).edit().putString(KEY_HUB, value).apply()
-
-    /**
-     * EMA samples per day. A knob with its cost stated rather than a silent
-     * default: multiple samples a day is what makes EMA a method rather than a
-     * diary, and one-a-day trades most of that away for compliance. The
-     * operator gets to make that trade knowingly.
-     */
-    fun emaPerDay(ctx: Context): Int = prefs(ctx).getInt(KEY_EMA_PER_DAY, 3)
-
-    fun setEmaPerDay(ctx: Context, value: Int) =
-        prefs(ctx).edit().putInt(KEY_EMA_PER_DAY, value.coerceIn(0, 12)).apply()
 
     fun notificationListenerAcknowledged(ctx: Context): Boolean =
         prefs(ctx).getBoolean(KEY_LISTENER_ACK, false)

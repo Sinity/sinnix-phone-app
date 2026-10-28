@@ -24,9 +24,14 @@
   <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
   <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
 
-  <!-- The location lane: coarse only. Fine location would buy precision this
-       lane has no use for — the question is which place, not which chair. -->
+  <!-- Fine/background location is required to read the connected Wi-Fi SSID. -->
   <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+  <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+  <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+  <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+  <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+  <!-- Package broadcasts must include apps outside the default visibility set. -->
+  <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
   <!-- Health Connect read grants, per record type, and deliberately the whole
        set rather than the three the lane first happened to use. Blood oxygen
@@ -297,10 +302,6 @@
     </receiver>
 
     <receiver android:name=".capture.WatchdogReceiver" android:exported="false" />
-
-    <!-- Notification-borne verbs: EMA answered from the shade via RemoteInput,
-         receipts acknowledged, a mark logged without opening anything. -->
-    <receiver android:name=".sync.NotificationActionReceiver" android:exported="false" />
 
     <!-- Sleep inertia: setAlarmClock fires this, which launches the micro-PVT. -->
     <receiver android:name=".instruments.sleep.SleepAlarmReceiver" android:exported="false" />

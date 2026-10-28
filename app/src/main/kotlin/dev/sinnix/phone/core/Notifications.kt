@@ -35,12 +35,8 @@ object Notifications {
     /** Prime answered: a transcript, a score, a send confirmation. Silent. */
     const val CHANNEL_RECEIPTS = "sinnix-receipts"
 
-    /** EMA prompts, answerable from the shade without unlocking. */
-    const val CHANNEL_EMA = "sinnix-ema"
-
     const val ID_ONGOING = 4711
     const val ID_ALERT = 4712
-    const val ID_EMA = 4713
     const val ID_NEEDS_YOU_BASE = 4800
     const val ID_RECEIPT_BASE = 4900
 
@@ -62,9 +58,9 @@ object Notifications {
             it.setShowBadge(false)
             it.setSound(null, null)
         }
-        channel(nm, CHANNEL_EMA, "Check-ins", NotificationManager.IMPORTANCE_DEFAULT) {
-            it.setShowBadge(false)
-        }
+        // Upgrade cleanup: withdraw the retired check-in and its channel.
+        nm.cancel(4713)
+        nm.deleteNotificationChannel("sinnix-ema")
     }
 
     private inline fun channel(

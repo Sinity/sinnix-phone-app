@@ -22,14 +22,23 @@ import dev.sinnix.phone.core.Events
  */
 class PhoneNotificationListener : NotificationListenerService() {
 
+    private val media by lazy { MediaSessions(this) }
+
     override fun onListenerConnected() {
         super.onListenerConnected()
+        media.start()
         Events.record(this, "grant_transition", "grant", "notification_listener", "granted", true)
     }
 
     override fun onListenerDisconnected() {
+        media.stop()
         super.onListenerDisconnected()
         Events.record(this, "grant_transition", "grant", "notification_listener", "granted", false)
+    }
+
+    override fun onDestroy() {
+        media.stop()
+        super.onDestroy()
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
