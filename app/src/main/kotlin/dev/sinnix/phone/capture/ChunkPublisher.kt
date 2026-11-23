@@ -22,7 +22,7 @@ class ChunkPublisher(context: Context) {
                 val target = Storage.chunkDir(ctx)
                 if (source != null && target != null) {
                     for (file in source.listFiles().orEmpty().sortedBy { it.name }) {
-                        if (!file.isFile || !(file.name.endsWith(".m4a") || file.name.endsWith(".orphan"))) continue
+                        if (!file.isFile || !AmbientService.isClosedChunk(file.name)) continue
                         VerifiedChunkCopy.publish(file, File(target, file.name))
                         Events.record(ctx, "chunk_published", "chunk", file.name)
                     }

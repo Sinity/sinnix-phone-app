@@ -86,13 +86,13 @@ fun CaptureScreen(nav: NavController) {
                 val transfers = Events.recentOfKind(ctx, 2, "chunk_uploaded", "chunk_upload_undeletable", "chunk_upload_blocked", "chunk_upload_ready")
                 val dir = Storage.chunkDir(ctx)
                 val entries = dir?.listFiles()
-                val candidates = entries?.filter { it.name.endsWith(".m4a") || it.name.endsWith(".m4a.orphan") }
+                val candidates = entries?.filter { AmbientService.isClosedChunk(it.name) }
                 TransferSnapshot(
                     Status.read(ctx),
                     transfers.lastOrNull { it.optString("kind") in setOf("chunk_uploaded", "chunk_upload_undeletable") },
                     transfers.lastOrNull { it.optString("kind") in setOf("chunk_upload_blocked", "chunk_upload_ready") },
                     candidates?.takeIf { files -> files.all { it.isFile } }?.size,
-                    Storage.recordingDir(ctx)?.listFiles()?.filter { it.name.endsWith(".m4a") || it.name.endsWith(".orphan") }
+                    Storage.recordingDir(ctx)?.listFiles()?.filter { AmbientService.isClosedChunk(it.name) }
                         ?.takeIf { files -> files.all { it.isFile } }?.size,
                     Outbox.pendingCount(ctx), dir?.absolutePath,
                 )

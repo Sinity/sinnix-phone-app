@@ -126,7 +126,7 @@ object DirectBoot {
         val buffer = bufferDir(ctx) ?: return
         val dest = Storage.chunkDir(ctx) ?: return
         var moved = 0
-        buffer.listFiles { _, name -> name.endsWith(".m4a") }?.forEach { chunk ->
+        buffer.listFiles { _, name -> AmbientService.isClosedChunk(name) }?.forEach { chunk ->
             val target = File(dest, chunk.name)
             if (chunk.renameTo(target) || copyThenDelete(chunk, target)) moved++
         }
@@ -176,7 +176,7 @@ object DirectBoot {
     /** Oldest-first eviction, so a long lock keeps the most recent audio. */
     fun trim(ctx: Context) {
         val dir = bufferDir(ctx) ?: return
-        val chunks = dir.listFiles { _, n -> n.endsWith(".m4a") }?.sortedBy { it.name } ?: return
+        val chunks = dir.listFiles { _, n -> AmbientService.isClosedChunk(n) }?.sortedBy { it.name } ?: return
         var total = chunks.sumOf { it.length() }
         for (chunk in chunks) {
             if (total <= BUFFER_BYTES) break
@@ -185,7 +185,7 @@ object DirectBoot {
         }
     }
 
-    /** ~30 chunks at the archive grade. Enough for a night, not for a week. */
+    /** ~120 Opus chunks: a long night, not a week. */
     private const val BUFFER_BYTES = 120L * 1024 * 1024
 }
 
@@ -249,16 +249,16 @@ class DirectBootService : android.app.Service() {
             return
         }
         DirectBoot.trim(this)
-        val part = File(dir, "ambient-${Stamps.compact(System.currentTimeMillis())}.m4a")
+        val part = File(dir, "ambient-${Stamps.compact(System.currentTimeMillis())}${AmbientService.CHUNK_SUFFIX}")
         val r =
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(this)
             else @Suppress("DEPRECATION") MediaRecorder()
         r.setAudioSource(MediaRecorder.AudioSource.MIC)
-        r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-        r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+        r.setOutputFormat(MediaRecorder.OutputFormat.OGG)
+        r.setAudioEncoder(MediaRecorder.AudioEncoder.OPUS)
         r.setAudioChannels(1)
         r.setAudioSamplingRate(48_000)
-        r.setAudioEncodingBitRate(96_000)
+        r.setAudioEncodingBitRate(AmbientService.AUDIO_BITRATE)
         r.setOutputFile(part.absolutePath)
         try {
             r.prepare()

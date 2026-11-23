@@ -32,7 +32,7 @@ import java.io.File
  * single [MediaRecorder] at a time and rotates it on a fixed wall-clock
  * cadence, producing one chunk file per period.
  *
- * Files are recorded into private storage as `ambient-<UTC>.m4a.part`.
+ * Files are recorded into private storage as `ambient-<UTC>.opus.part`.
  * After the muxer closes, encoded duration is verified and [ChunkPublisher]
  * publishes a checked copy in shared storage without blocking the encoder.
  * The desktop drain rsyncs the shared directory with
@@ -136,7 +136,7 @@ class AmbientService : Service() {
      */
     private fun sweepOrphans() {
         val dirs = listOfNotNull(Storage.recordingDir(this), Storage.chunkDir(this))
-        for (part in dirs.flatMap { dir -> dir.listFiles { _, name -> name.endsWith(".m4a.part") }.orEmpty().toList() }) {
+        for (part in dirs.flatMap { dir -> dir.listFiles { _, name -> name.endsWith(".part") }.orEmpty().toList() }) {
             preserveFailedPart(part)
         }
     }
@@ -204,9 +204,9 @@ class AmbientService : Service() {
         // compact, NOT iso: this is a FILENAME. Extended ISO carries colons,
         // which sdcardfs rejects outright — every open fails with EPERM and the
         // recorder logs a start failure per attempt while looking otherwise
-        // healthy. The lake's ambient-<UTC basic>.m4a convention depends on
+        // healthy. The lake's ambient-<UTC basic> naming depends on
         // this shape too.
-        val part = File(dir, "ambient-${Stamps.compact(System.currentTimeMillis())}.m4a.part")
+        val part = File(dir, "ambient-${Stamps.compact(System.currentTimeMillis())}$CHUNK_SUFFIX.part")
 
         // Start every chunk back at the preferred rate. A codec refusal is
         // often transient (another app holding the encoder), and without this
@@ -272,14 +272,17 @@ class AmbientService : Service() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(this)
             else @Suppress("DEPRECATION") MediaRecorder()
         r.setAudioSource(MediaRecorder.AudioSource.MIC)
-        r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-        r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+        r.setOutputFormat(MediaRecorder.OutputFormat.OGG)
+        r.setAudioEncoder(MediaRecorder.AudioEncoder.OPUS)
         r.setAudioChannels(1)
         r.setAudioSamplingRate(samplingRate)
-        // 96 kbps mono AAC, the same archive bitrate the desktop lane encodes
-        // at, so a phone chunk and a desktop chunk are the same grade of
-        // evidence. ~3.6 MB per 5 min chunk.
-        r.setAudioEncodingBitRate(96_000)
+        // Ogg Opus at 16 kbps mono. The platform's MP4 writer takes no Opus
+        // track, and its WebM writer holds every cluster until stop(), so
+        // the file would not grow and the stall check below could not run.
+        // Ogg grows live but spends a page (~11 kbps) per 20 ms packet, so
+        // the encoder gets 16 kbps: wideband speech, which is what the
+        // 16 kHz transcriber on prime reads, at ~27 kbps on disk.
+        r.setAudioEncodingBitRate(AUDIO_BITRATE)
         return r
     }
 
@@ -382,7 +385,11 @@ class AmbientService : Service() {
         if (part.length() == 0L) {
             return part.delete()
         }
-        val dest = File(part.parentFile, stripPart(part.name).removeSuffix(".m4a") + "-failed${System.currentTimeMillis()}.m4a.orphan")
+        // Keep the part's own container suffix: a part left by an earlier
+        // build holds that build's format.
+        val closed = stripPart(part.name)
+        val suffix = "." + closed.substringAfterLast('.')
+        val dest = File(part.parentFile, closed.removeSuffix(suffix) + "-failed${System.currentTimeMillis()}$suffix.orphan")
         if (part.renameTo(dest)) {
             Events.record(this, "chunk_orphaned", "chunk", dest.name, "bytes", dest.length())
             return true
@@ -430,7 +437,7 @@ class AmbientService : Service() {
         val size = currentPart?.length() ?: 0L
         status.heartbeat(size, elapsedChunkSeconds(), sampleAmplitude())
         if (recorder != null && CaptureIntegrity.underproducing(elapsedChunkSeconds() * 1000, size)) {
-            onRecorderError("audio byte production below expected AAC rate: $size bytes in ${elapsedChunkSeconds()}s")
+            onRecorderError("audio byte production below expected Opus rate: $size bytes in ${elapsedChunkSeconds()}s")
             return
         }
         // Two lanes that need no schedule of their own: this process is
@@ -546,7 +553,20 @@ class AmbientService : Service() {
          * duration, with prepare() and start() both reporting success. Nothing
          * structural separates those two files; only their samples do.
          */
-        private val SAMPLING_RATE_LADDER = intArrayOf(48_000, 44_100, 16_000)
+        // Opus encodes 48/24/16 kHz natively; 44.1 kHz is not among its rates.
+        private val SAMPLING_RATE_LADDER = intArrayOf(48_000, 24_000, 16_000)
+
+        const val AUDIO_BITRATE = 16_000
+        const val CHUNK_SUFFIX = ".opus"
+
+        /**
+         * A closed chunk, including a crash-truncated `.orphan`. `.m4a` (AAC)
+         * and `.webm` are earlier generations; a phone upgraded mid-chunk can
+         * still hold one, and it ships like any other.
+         */
+        fun isClosedChunk(name: String): Boolean =
+            !name.startsWith(".") &&
+                listOf(CHUNK_SUFFIX, ".webm", ".m4a").any { name.endsWith(it) || name.endsWith("$it.orphan") }
 
         /** Set by the service itself so the watchdog and UI can ask cheaply. */
         @Volatile var running: Boolean = false

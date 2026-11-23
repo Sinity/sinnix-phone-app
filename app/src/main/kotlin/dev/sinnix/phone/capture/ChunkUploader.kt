@@ -159,10 +159,10 @@ class ChunkUploader(context: Context) {
     private fun shippable(name: String): Boolean =
         !name.endsWith(".part") &&
             !name.startsWith("status.json") &&
-            (name.endsWith(".m4a") || name.endsWith(".m4a.orphan"))
+            AmbientService.isClosedChunk(name)
 
     companion object {
-        /** A 5-minute chunk is ~3.6 MB; anything past this is not one. */
+        /** A 5-minute chunk is under 1 MB; anything past this is not one. */
         private const val MAX_BYTES = 64L shl 20
     }
 }

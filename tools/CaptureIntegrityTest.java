@@ -13,8 +13,10 @@ public final class CaptureIntegrityTest {
         require(CaptureIntegrity.complete(300000, 300048L));
         require(CaptureIntegrity.complete(15000, 15040L));
         require(!CaptureIntegrity.underproducing(20000, 0));
-        require(!CaptureIntegrity.underproducing(60000, 720000));
-        require(CaptureIntegrity.underproducing(120000, 499563));
+        require(!CaptureIntegrity.underproducing(60000, 180000));
+        require(!CaptureIntegrity.underproducing(120000, 330000));
+        require(!CaptureIntegrity.underproducing(120000, 30000));
+        require(CaptureIntegrity.underproducing(120000, 10000));
         require(CaptureIntegrity.underproducing(60000, 0));
         System.out.println("Capture integrity regression checks passed");
     }
