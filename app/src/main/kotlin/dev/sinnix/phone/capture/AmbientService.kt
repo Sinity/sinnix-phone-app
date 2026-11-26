@@ -8,8 +8,6 @@ import android.content.Intent
 import android.media.AudioManager
 import android.media.AudioRecordingConfiguration
 import android.media.MediaMetadataRetriever
-import android.media.MediaRecorder
-import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
@@ -28,9 +26,10 @@ import java.io.File
  * Continuous ambient audio capture.
  *
  * Runs as a microphone-typed foreground service, which is what lets the
- * recorder keep receiving real samples with the screen off. The service owns a
- * single [MediaRecorder] at a time and rotates it on a fixed wall-clock
- * cadence, producing one chunk file per period.
+ * recorder keep receiving real samples with the screen off. The service owns
+ * one [OpusRecorder] and moves it to a new chunk file on a fixed cadence; the
+ * microphone stays open across that change, so consecutive chunks are
+ * contiguous.
  *
  * Files are recorded into private storage as `ambient-<UTC>.opus.part`.
  * After the muxer closes, encoded duration is verified and [ChunkPublisher]
@@ -52,7 +51,7 @@ class AmbientService : Service() {
     private lateinit var handler: Handler
     private var wakeLock: PowerManager.WakeLock? = null
 
-    private var recorder: MediaRecorder? = null
+    private var recorder: OpusRecorder? = null
     private var currentPart: File? = null
     private var chunkStartedAtMs = 0L
     private var chunkStartedElapsedMs = 0L
@@ -187,51 +186,90 @@ class AmbientService : Service() {
 
     // --- recording ---------------------------------------------------------
 
-    /** Close the open chunk, open the next one, schedule the next rotation. */
+    /** Move capture to the next chunk file and schedule the following change. */
     private fun rotate() {
-        closeChunk()
-        val ok = openChunk()
+        val ok = continueChunk() || run {
+            closeChunk()
+            openChunk()
+        }
         handler.postDelayed(::rotate, if (ok) CHUNK_MILLIS else RETRY_MILLIS)
         updateNotification()
     }
 
-    private fun openChunk(): Boolean {
+    // compact, NOT iso: this is a FILENAME. Extended ISO carries colons,
+    // which sdcardfs rejects outright — every open fails with EPERM and the
+    // recorder logs a start failure per attempt while looking otherwise
+    // healthy. The lake's ambient-<UTC basic> naming depends on this shape
+    // too.
+    private fun newPart(startedAtMs: Long): File? {
         val dir = Storage.recordingDir(this)
         if (dir == null) {
             status.recordFailure("no writable private recording directory")
+            return null
+        }
+        return File(dir, "ambient-${Stamps.compact(startedAtMs)}$CHUNK_SUFFIX.part")
+    }
+
+    /**
+     * Hand the running recorder its next file. False when there is nothing to
+     * continue or the change failed; the caller then closes and reopens.
+     *
+     * Only a recorder at the preferred rate is continued. One that fell back
+     * to a lower rate is reopened instead, so a transient refusal does not
+     * degrade every later chunk.
+     */
+    private fun continueChunk(): Boolean {
+        val r = recorder ?: return false
+        val finished = currentPart ?: return false
+        if (samplingRate != SAMPLING_RATE_LADDER[0]) return false
+        val startedAtMs = System.currentTimeMillis()
+        val startedElapsedMs = SystemClock.elapsedRealtime()
+        val next = newPart(startedAtMs) ?: return false
+        try {
+            r.rotate(next)
+        } catch (e: Exception) {
+            Log.w(Storage.TAG, "could not continue into ${next.name}", e)
+            status.recordFailure("chunk change failed: $e")
             return false
         }
-        // compact, NOT iso: this is a FILENAME. Extended ISO carries colons,
-        // which sdcardfs rejects outright — every open fails with EPERM and the
-        // recorder logs a start failure per attempt while looking otherwise
-        // healthy. The lake's ambient-<UTC basic> naming depends on
-        // this shape too.
-        val part = File(dir, "ambient-${Stamps.compact(System.currentTimeMillis())}$CHUNK_SUFFIX.part")
+        val finishedStartedAtMs = chunkStartedAtMs
+        val elapsedMs = (startedElapsedMs - chunkStartedElapsedMs).coerceAtLeast(0L)
+        accountChunk(finished, finishedStartedAtMs, elapsedMs, stopped = true)
+        beginChunk(r, next, startedAtMs, startedElapsedMs)
+        return true
+    }
+
+    private fun openChunk(): Boolean {
+        val startedAtMs = System.currentTimeMillis()
+        val part = newPart(startedAtMs) ?: return false
 
         // Start every chunk back at the preferred rate. A codec refusal is
         // often transient (another app holding the encoder), and without this
         // reset one such moment would degrade every remaining chunk until the
         // service restarts. The cost when the refusal is permanent is one
-        // failed prepare() per rotation.
-        samplingRate = SAMPLING_RATE_LADDER[0]
-
+        // failed start per rotation.
         for (rate in SAMPLING_RATE_LADDER) {
             samplingRate = rate
-            val r = newRecorder()
-            r.setOutputFile(part.absolutePath)
-            r.setOnErrorListener { _, what, extra ->
+            lateinit var r: OpusRecorder
+            // Ogg Opus at 16 kbps mono. The platform's MP4 writer takes no
+            // Opus track, and its WebM writer holds every cluster until
+            // stop(), so the file would not grow and the stall check below
+            // could not run. Ogg grows live but spends a page (~11 kbps) per
+            // 20 ms packet, so the encoder gets 16 kbps: wideband speech,
+            // which is what the 16 kHz transcriber on prime reads, at
+            // ~27 kbps on disk.
+            r = OpusRecorder(this, rate, AUDIO_BITRATE) { detail ->
                 handler.post {
-                    if (recorder === r) onRecorderError("error $what/$extra")
+                    if (recorder === r) onRecorderError(detail)
                 }
             }
+            val startedElapsedMs = SystemClock.elapsedRealtime()
             try {
-                r.prepare()
-                r.start()
+                r.start(part)
             } catch (e: Exception) {
                 // Not every codec path accepts every rate. Walk down the ladder
                 // rather than dropping capture entirely — a degraded chunk
                 // beats a hole.
-                release(r)
                 if (!preserveFailedPart(part)) {
                     status.recordFailure("cannot preserve failed recording ${part.name}")
                     return false
@@ -244,10 +282,6 @@ class AmbientService : Service() {
                 continue
             }
             recorder = r
-            currentPart = part
-            chunkStartedAtMs = System.currentTimeMillis()
-            chunkStartedElapsedMs = SystemClock.elapsedRealtime()
-            recordingSilenced = false
             val callback = object : AudioManager.AudioRecordingCallback() {
                 override fun onRecordingConfigChanged(configs: MutableList<AudioRecordingConfiguration>) {
                     if (recorder !== r) return
@@ -257,38 +291,28 @@ class AmbientService : Service() {
             recordingCallback = callback
             try {
                 r.registerAudioRecordingCallback({ task -> handler.post(task) }, callback)
-                reportRecordingConfiguration(r)
             } catch (e: Exception) {
                 Log.w(Storage.TAG, "recording configuration unavailable", e)
             }
-            status.chunkOpened(part, chunkStartedAtMs, samplingRate)
+            beginChunk(r, part, startedAtMs, startedElapsedMs)
             return true
         }
         return false
     }
 
-    private fun newRecorder(): MediaRecorder {
-        val r =
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(this)
-            else @Suppress("DEPRECATION") MediaRecorder()
-        r.setAudioSource(MediaRecorder.AudioSource.MIC)
-        r.setOutputFormat(MediaRecorder.OutputFormat.OGG)
-        r.setAudioEncoder(MediaRecorder.AudioEncoder.OPUS)
-        r.setAudioChannels(1)
-        r.setAudioSamplingRate(samplingRate)
-        // Ogg Opus at 16 kbps mono. The platform's MP4 writer takes no Opus
-        // track, and its WebM writer holds every cluster until stop(), so
-        // the file would not grow and the stall check below could not run.
-        // Ogg grows live but spends a page (~11 kbps) per 20 ms packet, so
-        // the encoder gets 16 kbps: wideband speech, which is what the
-        // 16 kHz transcriber on prime reads, at ~27 kbps on disk.
-        r.setAudioEncodingBitRate(AUDIO_BITRATE)
-        return r
+    private fun beginChunk(r: OpusRecorder, part: File, startedAtMs: Long, startedElapsedMs: Long) {
+        currentPart = part
+        chunkStartedAtMs = startedAtMs
+        chunkStartedElapsedMs = startedElapsedMs
+        recordingSilenced = false
+        status.chunkOpened(part, startedAtMs, samplingRate)
+        reportRecordingConfiguration(r)
     }
 
     private fun closeChunk() {
         val r = recorder
         val part = currentPart
+        val startedAtMs = chunkStartedAtMs
         recorder = null
         currentPart = null
         if (r == null) return
@@ -307,11 +331,13 @@ class AmbientService : Service() {
         } catch (e: Exception) {
             Log.w(Storage.TAG, "recorder stop failed", e)
             status.recordFailure("recorder stop failed: $e")
-        } finally {
-            release(r)
         }
 
-        if (part == null) return
+        if (part != null) accountChunk(part, startedAtMs, elapsedMs, stopped)
+    }
+
+    /** Verify, rename and report a chunk file the recorder is finished with. */
+    private fun accountChunk(part: File, startedAtMs: Long, elapsedMs: Long, stopped: Boolean) {
         if (!stopped || !part.isFile || part.length() == 0L) {
             preserveFailedPart(part)
             return
@@ -337,7 +363,7 @@ class AmbientService : Service() {
             this,
             "chunk_closed",
             "chunk", finalFile.name,
-            "started_at", Stamps.iso(chunkStartedAtMs),
+            "started_at", Stamps.iso(startedAtMs),
             "seconds", (mediaMs ?: 0L) / 1000.0,
             "elapsed_seconds", elapsedMs / 1000.0,
             "closed_at", Stamps.iso(closedAt),
@@ -398,7 +424,7 @@ class AmbientService : Service() {
         return false
     }
 
-    private fun reportRecordingConfiguration(r: MediaRecorder) {
+    private fun reportRecordingConfiguration(r: OpusRecorder) {
         val config = try {
             r.activeRecordingConfiguration
         } catch (e: Exception) {
@@ -488,14 +514,10 @@ class AmbientService : Service() {
      *
      * Deliberately read once per heartbeat and nowhere else: the reading is
      * destructive (it resets the running peak), so a second caller would blind
-     * the silence check.
+     * the silence check. It is the largest sample the microphone delivered,
+     * taken before the encoder.
      */
-    private fun sampleAmplitude(): Int =
-        try {
-            recorder?.maxAmplitude ?: -1
-        } catch (e: Exception) {
-            -1
-        }
+    private fun sampleAmplitude(): Int = recorder?.takePeak() ?: -1
 
     private fun elapsedChunkSeconds(): Long =
         if (recorder == null) 0L else (SystemClock.elapsedRealtime() - chunkStartedElapsedMs) / 1000L
@@ -588,18 +610,5 @@ class AmbientService : Service() {
         }
 
         private fun stripPart(name: String): String = name.removeSuffix(".part")
-
-        private fun release(r: MediaRecorder) {
-            try {
-                r.reset()
-            } catch (ignored: Exception) {
-                // reset on a dead recorder is not actionable
-            }
-            try {
-                r.release()
-            } catch (ignored: Exception) {
-                // ditto
-            }
-        }
     }
 }

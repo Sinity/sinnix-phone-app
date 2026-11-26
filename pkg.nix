@@ -185,6 +185,7 @@ let
       javac -encoding UTF-8 -d integrity-test app/src/main/java/dev/sinnix/phone/core/*.java app/src/main/java/dev/sinnix/phone/capture/*.java app/src/main/java/dev/sinnix/phone/sync/*.java app/src/main/java/dev/sinnix/phone/prime/*.java tools/*Test.java
       java -cp integrity-test EventLogReaderTest
       java -cp integrity-test CaptureIntegrityTest
+      java -cp integrity-test PcmFramerTest
       java -cp integrity-test VerifiedChunkCopyTest
       java -cp integrity-test IntentReplyPolicyTest
       java -cp integrity-test MediaScanTest

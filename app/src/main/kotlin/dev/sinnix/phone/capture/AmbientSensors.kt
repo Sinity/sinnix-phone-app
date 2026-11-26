@@ -3,7 +3,7 @@ package dev.sinnix.phone.capture
 import android.content.Context
 import android.hardware.Sensor
 import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
+import android.hardware.SensorEventListener2
 import android.hardware.SensorManager
 import android.os.Handler
 import android.os.Looper
@@ -32,8 +32,13 @@ import kotlin.math.sqrt
  * Attached to the capture service rather than run on its own schedule: that
  * process is already alive continuously with a wakelock held, so this adds a
  * listener rather than a reason to wake up.
+ *
+ * Samples are delivered in batches: the sensor hub buffers them with their own
+ * timestamps and hands them over every [MAX_REPORT_LATENCY_US] at the latest.
+ * Unbatched, 50 callbacks a second crossed the sensor service, system_server
+ * and this process around the clock for the same bytes.
  */
-class AmbientSensors(context: Context) : SensorEventListener {
+class AmbientSensors(context: Context) : SensorEventListener2 {
 
     private val ctx: Context = context.applicationContext
     private val sensors: SensorManager? = ctx.getSystemService(SensorManager::class.java)
@@ -44,6 +49,7 @@ class AmbientSensors(context: Context) : SensorEventListener {
     private val raw = SensorChunkWriter(ctx)
     private var listening = false
     private var windowStartedAtMs = 0L
+    private var flushesPending = 0
 
     private var luxSamples = 0
     private var luxSum = 0.0
@@ -76,16 +82,32 @@ class AmbientSensors(context: Context) : SensorEventListener {
         val sm = sensors ?: return
         if (listening) return
         windowStartedAtMs = System.currentTimeMillis()
-        light?.let { sm.registerListener(this, it, SAMPLING_PERIOD_US) }
-        accelerometer?.let { sm.registerListener(this, it, SAMPLING_PERIOD_US) }
+        light?.let { sm.registerListener(this, it, SAMPLING_PERIOD_US, MAX_REPORT_LATENCY_US) }
+        accelerometer?.let { sm.registerListener(this, it, SAMPLING_PERIOD_US, MAX_REPORT_LATENCY_US) }
         listening = true
         handler.postDelayed(::flushWindow, SAMPLE_WINDOW_MILLIS)
     }
 
+    /**
+     * Close the minute: ask the hub for what it still holds, and write the
+     * aggregate once every sensor has delivered it.
+     */
     private fun flushWindow() {
         if (!listening) return
-        flush(System.currentTimeMillis())
         handler.postDelayed(::flushWindow, WINDOW_MILLIS)
+        // A drain that never completed must not hold the next minute open.
+        if (flushesPending > 0) flush(System.currentTimeMillis())
+        flushesPending = listOfNotNull(light, accelerometer).size
+        if (sensors?.flush(this) != true) {
+            flushesPending = 0
+            flush(System.currentTimeMillis())
+        }
+    }
+
+    override fun onFlushCompleted(sensor: Sensor?) {
+        if (flushesPending == 0) return
+        flushesPending--
+        if (flushesPending == 0) flush(System.currentTimeMillis())
     }
 
     override fun onSensorChanged(event: SensorEvent) {
@@ -192,6 +214,12 @@ class AmbientSensors(context: Context) : SensorEventListener {
 
         /** Highest stable rate requested; the device may deliver a different rate. */
         private const val SAMPLING_PERIOD_US = 20_000
+
+        /**
+         * Longest the hub may hold samples. 30 s at 50 Hz is half of the
+         * accelerometer's reserved buffer on the capture phone (3000 events).
+         */
+        private const val MAX_REPORT_LATENCY_US = 30_000_000
 
         /** Two decimals: lux and m/s² are not meaningful past that, and humans read the log too. */
         private fun round(v: Double): Double = (v * 100.0).roundToLong() / 100.0

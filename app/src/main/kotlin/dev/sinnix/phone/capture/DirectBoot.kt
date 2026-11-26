@@ -3,7 +3,6 @@ package dev.sinnix.phone.capture
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.media.MediaRecorder
 import android.os.Build
 import android.os.UserManager
 import android.util.Log
@@ -200,8 +199,7 @@ object DirectBoot {
  */
 class DirectBootService : android.app.Service() {
 
-    private var recorder: MediaRecorder? = null
-    private var current: File? = null
+    private var recorder: OpusRecorder? = null
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private val unlockCheck = object : Runnable {
         override fun run() {
@@ -242,41 +240,49 @@ class DirectBootService : android.app.Service() {
     }
 
     private fun rotate() {
-        close()
         val dir = DirectBoot.bufferDir(this)
         if (dir == null) {
+            close()
             stopSelf()
             return
         }
         DirectBoot.trim(this)
         val part = File(dir, "ambient-${Stamps.compact(System.currentTimeMillis())}${AmbientService.CHUNK_SUFFIX}")
-        val r =
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(this)
-            else @Suppress("DEPRECATION") MediaRecorder()
-        r.setAudioSource(MediaRecorder.AudioSource.MIC)
-        r.setOutputFormat(MediaRecorder.OutputFormat.OGG)
-        r.setAudioEncoder(MediaRecorder.AudioEncoder.OPUS)
-        r.setAudioChannels(1)
-        r.setAudioSamplingRate(48_000)
-        r.setAudioEncodingBitRate(AmbientService.AUDIO_BITRATE)
-        r.setOutputFile(part.absolutePath)
         try {
-            r.prepare()
-            r.start()
-            recorder = r
-            current = part
+            val running = recorder
+            if (running != null) {
+                running.rotate(part)
+            } else {
+                lateinit var r: OpusRecorder
+                r = OpusRecorder(this, 48_000, AmbientService.AUDIO_BITRATE) { detail ->
+                    handler.post {
+                        if (recorder === r) unavailable(detail)
+                    }
+                }
+                r.start(part)
+                recorder = r
+            }
         } catch (e: Exception) {
-            // The microphone may simply not be available before unlock on this
-            // device. Recorded rather than retried forever: a locked-boot
-            // window with a named failure is evidence, and a silent retry loop
-            // would only be a battery drain that looked like capture.
             Log.w(Storage.TAG, "locked-boot recorder failed", e)
-            DirectBoot.note(this, "locked_boot_mic_unavailable")
-            part.delete()
-            stopSelf()
+            if (part.length() == 0L) part.delete()
+            unavailable(e.toString())
             return
         }
         handler.postDelayed(::rotate, AmbientService.CHUNK_MILLIS)
+    }
+
+    /**
+     * The microphone may simply not be available before unlock on this
+     * device. Recorded rather than retried forever: a locked-boot window with
+     * a named failure is evidence, and a silent retry loop would only be a
+     * battery drain that looked like capture.
+     */
+    private fun unavailable(detail: String) {
+        Log.w(Storage.TAG, "locked-boot capture stopped: $detail")
+        DirectBoot.note(this, "locked_boot_mic_unavailable")
+        handler.removeCallbacksAndMessages(null)
+        close()
+        stopSelf()
     }
 
     private fun close() {
@@ -284,14 +290,9 @@ class DirectBootService : android.app.Service() {
         recorder = null
         try {
             r.stop()
-        } catch (ignored: Exception) {
-            current?.delete()
-        } finally {
-            try {
-                r.release()
-            } catch (ignored: Exception) {
-                // a released recorder is the desired end state either way
-            }
+        } catch (e: Exception) {
+            // The file keeps every page written before the failure.
+            Log.w(Storage.TAG, "locked-boot recorder stop failed", e)
         }
     }
 
